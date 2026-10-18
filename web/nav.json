@@ -1,0 +1,285 @@
+{
+ "protected": [
+  "menus",
+  "users"
+ ],
+ "defaultDisabled": [
+  "properties",
+  "owners"
+ ],
+ "mains": [
+  {
+   "id": "acc",
+   "ic": "∑",
+   "t": "إدارة الأعمال",
+   "secs": [
+    {
+     "id": "sales",
+     "t": "المبيعات",
+     "kids": [
+      [
+       "leases",
+       "عقود الإيجار"
+      ],
+      [
+       "invoices",
+       "الفواتير والتحصيل"
+      ],
+      [
+       "bookings",
+       "الحجوزات"
+      ],
+      [
+       "partners",
+       "العملاء"
+      ],
+      [
+       "products",
+       "المنتجات والعروض"
+      ],
+      [
+       "transfers",
+       "الحوالات"
+      ],
+      [
+       "orders",
+       "البيع الإلكتروني",
+       "online_shop"
+      ],
+      [
+       "pos",
+       "نقاط البيع",
+       "pos"
+      ],
+      [
+       "properties",
+       "العقارات والوحدات"
+      ],
+      [
+       "owners",
+       "الملاك"
+      ]
+     ]
+    },
+    {
+     "id": "purch",
+     "t": "المشتريات",
+     "kids": [
+      [
+       "vendors",
+       "الموردون"
+      ],
+      [
+       "bills",
+       "فواتير الموردين"
+      ],
+      [
+       "apay",
+       "الذمم الدائنة والمدفوعات"
+      ]
+     ]
+    },
+    {
+     "id": "stockm",
+     "t": "المخزون",
+     "kids": [
+      [
+       "stock",
+       "أرصدة المخزون"
+      ],
+      [
+       "count",
+       "الجرد والاستلام"
+      ]
+     ]
+    },
+    {
+     "id": "fin",
+     "t": "المالية",
+     "kids": [
+      [
+       "quick",
+       "المصروفات والإيرادات"
+      ],
+      [
+       "dues",
+       "الذمم والمدفوعات"
+      ],
+      [
+       "journal",
+       "قيود اليومية"
+      ],
+      [
+       "accounts",
+       "دليل الحسابات"
+      ],
+      [
+       "periods",
+       "الفترات والإقفال"
+      ],
+      [
+       "currencies",
+       "العملات"
+      ]
+     ]
+    },
+    {
+     "id": "reps",
+     "t": "التقارير",
+     "kids": [
+      [
+       "reports",
+       "التقارير المالية"
+      ],
+      [
+       "salesrep",
+       "تقارير المبيعات"
+      ],
+      [
+       "purchrep",
+       "تقارير المشتريات"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "store",
+   "ic": "▦",
+   "t": "المتجر",
+   "secs": [
+    {
+     "id": "storem",
+     "kids": [
+      [
+       "stores",
+       "إعدادات المتجر"
+      ],
+      [
+       "geo",
+       "المناطق والمدن والأحياء"
+      ],
+      [
+       "branches",
+       "الفروع"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "admin",
+   "ic": "⚙",
+   "t": "الإدارة",
+   "secs": [
+    {
+     "id": "adm",
+     "kids": [
+      [
+       "users",
+       "الإدارة وحسابي"
+      ],
+      [
+       "menus",
+       "إعدادات القوائم"
+      ]
+     ]
+    },
+    {
+     "id": "docs",
+     "t": "التوثيق",
+     "kids": [
+      [
+       "doc:sop",
+       "إجراءات SOP"
+      ],
+      [
+       "doc:faq",
+       "الأسئلة الشائعة"
+      ],
+      [
+       "doc:commerce",
+       "المتجر والتجارة"
+      ],
+      [
+       "doc:zatca",
+       "ZATCA"
+      ],
+      [
+       "doc:google-play",
+       "النشر على Google Play"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "system",
+   "ic": "◈",
+   "t": "النظام",
+   "secs": [
+    {
+     "id": "sys",
+     "kids": [
+      [
+       "dashboard",
+       "لوحة التحكم"
+      ],
+      [
+       "rules",
+       "مختبر القواعد"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "icons": {
+  "main:acc": "briefcase",
+  "main:store": "store",
+  "main:admin": "usercog",
+  "main:system": "settings",
+  "sec:sales": "chart",
+  "sec:purch": "truck",
+  "sec:stockm": "boxes",
+  "sec:fin": "coins",
+  "sec:reps": "pie",
+  "sec:docs": "bookopen",
+  "salesrep": "filechart",
+  "leases": "key",
+  "invoices": "file",
+  "bookings": "calendar",
+  "partners": "users",
+  "products": "tag",
+  "transfers": "swap",
+  "orders": "globe",
+  "pos": "pos",
+  "properties": "building",
+  "owners": "user",
+  "vendors": "truck",
+  "bills": "docdown",
+  "apay": "wallet",
+  "stock": "boxes",
+  "count": "clipboard",
+  "quick": "banknote",
+  "dues": "clock",
+  "journal": "book",
+  "accounts": "list",
+  "periods": "lock",
+  "currencies": "currency",
+  "reports": "pie",
+  "purchrep": "filechart",
+  "stores": "store",
+  "geo": "pin",
+  "branches": "branch",
+  "users": "usercog",
+  "menus": "toggles",
+  "doc:sop": "clipboard",
+  "doc:faq": "help",
+  "doc:commerce": "store",
+  "doc:zatca": "verified",
+  "doc:google-play": "play",
+  "dashboard": "dashboard",
+  "rules": "shield"
+ }
+}

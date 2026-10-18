@@ -1,0 +1,50 @@
+name: oklent-erpx          # its own compose project
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: erpx_owner
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:-owner_dev_change_me}
+      POSTGRES_DB: erpx
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-erpx_app_dev}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe!2026}
+    volumes:
+      - erpx_pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports: ["127.0.0.1:5434:5432"]   # 5434 so it never clashes with local PostgreSQL (5432) or other projects (5433); bound to this machine only
+    healthcheck: { test: ["CMD-SHELL","pg_isready -U erpx_owner -d erpx"], interval: 5s, retries: 20 }
+  migrate:                          # one-shot: upgrades an EXISTING database volume (adds the tables newer versions need) before the api starts
+    build: .
+    command: ["node", "api/src/migrate-cli.js"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      OWNER_DATABASE_URL: postgres://erpx_owner:${OWNER_DB_PASSWORD:-owner_dev_change_me}@db:5432/erpx   # the owner credential lives ONLY in this short-lived container
+    restart: "no"
+  api:
+    build: .
+    depends_on: { db: { condition: service_healthy }, migrate: { condition: service_completed_successfully } }
+    environment:
+      DATABASE_URL: postgres://erpx_app:${APP_DB_PASSWORD:-erpx_app_dev}@db:5432/erpx
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      NODE_ENV: ${NODE_ENV:-development}
+      UPLOAD_DIR: /app/uploads       # product images live on the erpx_uploads volume: they survive `docker compose down` and rebuilds
+      TRUST_PROXY: "true"           # the api is reachable only through the web (nginx) service, which overwrites X-Forwarded-For
+    volumes:
+      - erpx_uploads:/app/uploads
+    expose: ["3100"]                # internal only: the public entry point is the web service below
+    healthcheck: { test: ["CMD-SHELL","wget -qO- http://127.0.0.1:3100/api/health >/dev/null || exit 1"], interval: 5s, timeout: 3s, retries: 20, start_period: 5s }
+  web:
+    image: nginx:1.27-alpine        # serves web/ and forwards /api and /shop to api; index.html and sw.js are never cached
+    depends_on: { api: { condition: service_healthy } }
+    environment:
+      ERPX_WEB_CONF: "0.8.1"          # bump when deploy/nginx/*.conf changes: `up -d` then RECREATES this container (a bind-mounted file change alone does not, and nginx keeps the old config)
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/proxy.conf:/etc/nginx/erpx-proxy.conf:ro
+      - ./deploy/nginx/security-headers.conf:/etc/nginx/erpx-security-headers.conf:ro
+    ports: ["3100:80"]              # same public port as before: http://localhost:3100
+    restart: unless-stopped
+volumes:
+  erpx_pgdata:
+  erpx_uploads:               # product images (back it up together with erpx_pgdata)
