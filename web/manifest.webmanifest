@@ -1,4 +1,4 @@
-{ "name": "OKLENT-ERPX", "short_name": "ERPX", "lang": "ar", "dir": "rtl", "start_url": "/", "scope": "/", "display": "standalone",
+{ "name": "OKLENT BUSINESS", "short_name": "OKLENT", "lang": "ar", "dir": "rtl", "start_url": "/", "scope": "/", "display": "standalone",
   "background_color": "#103555", "theme_color": "#103555",
   "icons": [ { "src": "/logo.png", "sizes": "375x375", "type": "image/png", "purpose": "any" },
              { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },

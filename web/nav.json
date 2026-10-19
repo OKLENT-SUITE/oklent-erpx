@@ -9,21 +9,41 @@
  ],
  "mains": [
   {
-   "id": "acc",
-   "ic": "∑",
-   "t": "إدارة الأعمال",
+   "id": "dash",
+   "ic": "◈",
+   "t": "لوحة التحكم",
+   "secs": [
+    {
+     "id": "dashs",
+     "kids": [
+      [
+       "dashboard",
+       "لوحة التحكم"
+      ],
+      [
+       "rules",
+       "مختبر القواعد"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ops",
+   "ic": "⚡",
+   "t": "العمليات",
    "secs": [
     {
      "id": "sales",
      "t": "المبيعات",
      "kids": [
       [
-       "leases",
-       "عقود الإيجار"
-      ],
-      [
        "invoices",
        "الفواتير والتحصيل"
+      ],
+      [
+       "leases",
+       "عقود الإيجار"
       ],
       [
        "bookings",
@@ -92,14 +112,50 @@
        "الجرد والاستلام"
       ]
      ]
-    },
+    }
+   ]
+  },
+  {
+   "id": "hr",
+   "ic": "👥",
+   "t": "الموارد البشرية",
+   "secs": [
     {
-     "id": "fin",
-     "t": "المالية",
+     "id": "hrm",
+     "t": "شؤون الموظفين",
      "kids": [
       [
+       "employees",
+       "الموظفون"
+      ],
+      [
+       "payroll",
+       "الرواتب"
+      ],
+      [
+       "custody",
+       "العهد"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fin",
+   "ic": "💰",
+   "t": "المالية",
+   "secs": [
+    {
+     "id": "finm",
+     "t": "الحسابات والمالية",
+     "kids": [
+      [
+       "expenses",
+       "المصروفات"
+      ],
+      [
        "quick",
-       "المصروفات والإيرادات"
+       "المصروفات السريعة"
       ],
       [
        "dues",
@@ -122,24 +178,6 @@
        "العملات"
       ]
      ]
-    },
-    {
-     "id": "reps",
-     "t": "التقارير",
-     "kids": [
-      [
-       "reports",
-       "التقارير المالية"
-      ],
-      [
-       "salesrep",
-       "تقارير المبيعات"
-      ],
-      [
-       "purchrep",
-       "تقارير المشتريات"
-      ]
-     ]
     }
    ]
   },
@@ -150,6 +188,7 @@
    "secs": [
     {
      "id": "storem",
+     "t": "إدارة المتجر",
      "kids": [
       [
        "stores",
@@ -168,12 +207,42 @@
    ]
   },
   {
+   "id": "reps",
+   "ic": "📊",
+   "t": "التقارير",
+   "secs": [
+    {
+     "id": "repsm",
+     "t": "مركز التقارير",
+     "kids": [
+      [
+       "reports",
+       "التقارير المالية"
+      ],
+      [
+       "salesrep",
+       "تقارير المبيعات"
+      ],
+      [
+       "purchrep",
+       "تقارير المشتريات"
+      ],
+      [
+       "hrrep",
+       "تقارير الموارد البشرية"
+      ]
+     ]
+    }
+   ]
+  },
+  {
    "id": "admin",
    "ic": "⚙",
-   "t": "الإدارة",
+   "t": "الإعدادات",
    "secs": [
     {
      "id": "adm",
+     "t": "النظام والصلاحيات",
      "kids": [
       [
        "users",
@@ -212,39 +281,27 @@
      ]
     }
    ]
-  },
-  {
-   "id": "system",
-   "ic": "◈",
-   "t": "النظام",
-   "secs": [
-    {
-     "id": "sys",
-     "kids": [
-      [
-       "dashboard",
-       "لوحة التحكم"
-      ],
-      [
-       "rules",
-       "مختبر القواعد"
-      ]
-     ]
-    }
-   ]
   }
  ],
  "icons": {
-  "main:acc": "briefcase",
+  "main:dash": "dashboard",
+  "main:ops": "briefcase",
+  "main:hr": "users",
+  "main:fin": "coins",
   "main:store": "store",
-  "main:admin": "usercog",
-  "main:system": "settings",
+  "main:reps": "pie",
+  "main:admin": "settings",
   "sec:sales": "chart",
   "sec:purch": "truck",
   "sec:stockm": "boxes",
-  "sec:fin": "coins",
-  "sec:reps": "pie",
+  "sec:hrm": "usercheck",
+  "sec:finm": "wallet",
+  "sec:storem": "store",
+  "sec:repsm": "filechart",
+  "sec:adm": "usercog",
   "sec:docs": "bookopen",
+  "dashboard": "dashboard",
+  "rules": "shield",
   "salesrep": "filechart",
   "leases": "key",
   "invoices": "file",
@@ -261,6 +318,10 @@
   "apay": "wallet",
   "stock": "boxes",
   "count": "clipboard",
+  "employees": "users",
+  "payroll": "badgecheck",
+  "custody": "wallet",
+  "expenses": "receipt",
   "quick": "banknote",
   "dues": "clock",
   "journal": "book",
@@ -269,6 +330,7 @@
   "currencies": "currency",
   "reports": "pie",
   "purchrep": "filechart",
+  "hrrep": "filechart",
   "stores": "store",
   "geo": "pin",
   "branches": "branch",
@@ -278,8 +340,6 @@
   "doc:faq": "help",
   "doc:commerce": "store",
   "doc:zatca": "verified",
-  "doc:google-play": "play",
-  "dashboard": "dashboard",
-  "rules": "shield"
+  "doc:google-play": "play"
  }
 }

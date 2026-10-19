@@ -210,26 +210,81 @@ export function installCommerce(VIEWS, X) {
     if (!s) { m.innerHTML = head('إعدادات المتجر') + '<div class="card">لا توجد متاجر.</div>'; return done(m); }
     const warn = []; const safe = (p, d) => api(p).catch(e => { warn.push(e.message); return d; });
     const [w, rd] = await Promise.all([safe(`/stores/${s.id}/site`, {}), safe(`/stores/${s.id}/readiness`, { ready: false, blockers: 0, items: [], is_published: false })]); const ty = types.find(t => t.code === s.commerce_type);
-    m.innerHTML = head('إعدادات المتجر والموقع', 'نوع التجارة يحدد الميزات المفعّلة، والميزات تتحكم في القوائم والشاشات والموقع العام') + (warn.length ? `<div class="geo-note">⚠ تعذّر تحميل جزء من البيانات: ${esc(warn.join(' | '))}</div>` : '') +
+    m.innerHTML = head('إعدادات المتجر والموقع', 'تكوين نوع النشاط والميزات التشغيلية، إعدادات المتجر الإلكتروني ووسائل الدفع والتوصيل، والتحقق من جاهزية الإطلاق.') + (warn.length ? `<div class="geo-note">⚠ تعذّر تحميل جزء من البيانات: ${esc(warn.join(' | '))}</div>` : '') +
       `<div class="tabs">${stores.map(x => `<button data-s="${x.id}" class="${x.id === s.id ? 'on' : ''}">${esc(x.name_ar)}</button>`).join('')}</div>
-      <div class="card"><b>١) نوع النشاط والميزات</b><div class="row"><label>نوع التجارة<select id="ct" ${ad ? '' : 'disabled'}>${types.map(t => `<option value="${t.code}" ${t.code === s.commerce_type ? 'selected' : ''}>${esc(t.name_ar)} — ${esc(t.name_en)}</option>`).join('')}</select></label>
-        <label>الفرع<select id="cb" ${ad ? '' : 'disabled'}>${br.map(b => `<option value="${b.code}" ${b.id === s.branch_id ? 'selected' : ''}>${esc(b.name_ar)}</option>`).join('')}</select></label>
-        <label>الحالة<select id="ca" ${ad ? '' : 'disabled'}><option value="true" ${s.is_active ? 'selected' : ''}>نشط</option><option value="false" ${!s.is_active ? 'selected' : ''}>موقوف</option></select></label></div>
-        <p class="sub">${esc(ty?.description_ar || '')}</p><div class="feat" id="ft">${features.map(f => `<label><input type="checkbox" value="${f.code}" ${s.features.includes(f.code) ? 'checked' : ''} ${ad ? '' : 'disabled'}>${esc(f.name_ar)}</label>`).join('')}</div>
-        ${ad ? '<div class="row" style="margin-top:10px"><button class="btn ghost" id="cd">تطبيق ميزات النوع الافتراضية</button><button class="btn teal" id="cs">حفظ النوع والميزات</button></div>' : ''}</div>
-      <div class="card"><b>٢) الموقع الإلكتروني</b> ${s.features.includes('online_shop') ? `<a class="btn ghost sm" href="/shop/${s.slug}" target="_blank">فتح الموقع ↗</a> <span class="sub n">/shop/${esc(s.slug)}</span>` : '<span class="sub">فعّل «المتجر الإلكتروني» لتشغيل الموقع</span>'}
-        <div class="row"><label>عنوان الموقع<input id="wt" value="${esc(w.title_ar || '')}"></label><label>شعار قصير<input id="wg" value="${esc(w.tagline_ar || '')}"></label><label>لون الواجهة<input type="color" id="wc" value="${esc(w.theme_color || '#14B8A6')}"></label></div>
-        <div class="row"><label>الجوال<input id="wp" value="${esc(w.phone || '')}"></label><label>واتساب<input id="ww" value="${esc(w.whatsapp || '')}"></label><label>البريد<input id="we" value="${esc(w.email || '')}"></label></div>
-        <label>نبذة<textarea id="wa" rows="2">${esc(w.about_ar || '')}</textarea></label><br><label>سياسة الاسترجاع<textarea id="wr" rows="2">${esc(w.return_policy_ar || '')}</textarea></label>
-        <p><b>طرق الدفع المقبولة</b></p><div class="feat" id="pm">${Object.entries(PAY).map(([k, l]) => `<label><input type="checkbox" value="${k}" ${(w.payment_methods || ['cod']).includes(k) ? 'checked' : ''}>${l}</label>`).join('')}</div>
-        <div class="row" style="margin-top:10px"><label>رسوم التوصيل (بدون ضريبة)<input id="wd" type="number" step="0.01" value="${w.delivery_fee || 0}"></label><label>توصيل مجاني فوق<input id="wf" type="number" step="0.01" value="${w.free_delivery_over || ''}"></label><label>الحد الأدنى للطلب<input id="wm" type="number" step="0.01" value="${w.min_order || 0}"></label></div>
-        <label><input type="checkbox" id="wpub" style="width:auto" ${w.is_published ? 'checked' : ''}> نشر الموقع للعامة (يظهر المنتجات «المنشورة» فقط)</label>
-        ${ad ? '<br><button class="btn teal" id="ws">حفظ إعدادات الموقع</button>' : ''}</div>
-      <div class="card"><b>٣) جاهزية التشغيل</b> ${rd.ready ? tag('open', 'جاهز للتشغيل') : tag('closed', 'ناقص ' + rd.blockers + ' بند')} ${rd.is_published ? tag('ok', 'منشور للعامة') : tag('locked', 'غير منشور')}
+      <div class="row noprint" style="gap:8px;margin-bottom:12px">
+        <a href="#sec-type" class="btn ghost sm">١) نوع النشاط والميزات</a>
+        <a href="#sec-site" class="btn ghost sm">٢) الموقع الإلكتروني والتوصيل</a>
+        <a href="#sec-ready" class="btn ghost sm">٣) جاهزية التشغيل</a>
+        ${ad ? '<a href="#sec-new" class="btn ghost sm">٤) متجر جديد</a>' : ''}
+      </div>
+      <div class="card" id="sec-type">
+        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
+          <b>١) نوع النشاط التجاري والميزات المفعّلة</b>
+          <span class="sub">يتحكم في شاشات المحاسبة، نقاط البيع، والمتجر الإلكتروني</span>
+        </div>
+        <div class="row">
+          <label>نوع التجارة<select id="ct" ${ad ? '' : 'disabled'}>${types.map(t => `<option value="${t.code}" ${t.code === s.commerce_type ? 'selected' : ''}>${esc(t.name_ar)} — ${esc(t.name_en)}</option>`).join('')}</select></label>
+          <label>الفرع الافتراضي<select id="cb" ${ad ? '' : 'disabled'}>${br.map(b => `<option value="${b.code}" ${b.id === s.branch_id ? 'selected' : ''}>${esc(b.name_ar)}</option>`).join('')}</select></label>
+          <label>حالة المتجر<select id="ca" ${ad ? '' : 'disabled'}><option value="true" ${s.is_active ? 'selected' : ''}>نشط</option><option value="false" ${!s.is_active ? 'selected' : ''}>موقوف</option></select></label>
+        </div>
+        <p class="sub">${esc(ty?.description_ar || '')}</p>
+        <div class="feat" id="ft">${features.map(f => `<label><input type="checkbox" value="${f.code}" ${s.features.includes(f.code) ? 'checked' : ''} ${ad ? '' : 'disabled'}>${esc(f.name_ar)}</label>`).join('')}</div>
+        ${ad ? '<div class="row" style="margin-top:12px"><button class="btn ghost" id="cd">تطبيق ميزات النوع الافتراضية</button><button class="btn teal" id="cs">حفظ النوع والميزات</button></div>' : ''}
+      </div>
+
+      <div class="card" id="sec-site">
+        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
+          <b>٢) الموقع الإلكتروني والتوصيل والدفع</b>
+          ${s.features.includes('online_shop') ? `<a class="btn ghost sm" href="/shop/${s.slug}" target="_blank">فتح الموقع للعامة ↗ <span class="sub n">/shop/${esc(s.slug)}</span></a>` : '<span class="sub">فعّل «المتجر الإلكتروني» من النشاط لتشغيل الموقع</span>'}
+        </div>
+        <div class="row">
+          <label>عنوان الموقع (العربية)<input id="wt" value="${esc(w.title_ar || '')}"></label>
+          <label>الشعار القصير (Tagline)<input id="wg" value="${esc(w.tagline_ar || '')}"></label>
+          <label>لون هوية المتجر<input type="color" id="wc" value="${esc(w.theme_color || '#14B8A6')}"></label>
+        </div>
+        <div class="row">
+          <label>رقم الجوال<input id="wp" value="${esc(w.phone || '')}"></label>
+          <label>رقم الواتساب<input id="ww" value="${esc(w.whatsapp || '')}"></label>
+          <label>البريد الإلكتروني<input id="we" value="${esc(w.email || '')}"></label>
+        </div>
+        <label>نبذة عن المتجر<textarea id="wa" rows="2">${esc(w.about_ar || '')}</textarea></label><br>
+        <label>سياسة الاستبدال والاسترجاع<textarea id="wr" rows="2">${esc(w.return_policy_ar || '')}</textarea></label>
+        <p><b>وسائل الدفع المقبولة في المتجر</b></p>
+        <div class="feat" id="pm">${Object.entries(PAY).map(([k, l]) => `<label><input type="checkbox" value="${k}" ${(w.payment_methods || ['cod']).includes(k) ? 'checked' : ''}>${l}</label>`).join('')}</div>
+        <div class="row" style="margin-top:12px">
+          <label>رسوم التوصيل (ريال بدون ضريبة)<input id="wd" type="number" step="0.01" value="${w.delivery_fee || 0}"></label>
+          <label>توصيل مجاني للطلبات فوق (ريال)<input id="wf" type="number" step="0.01" value="${w.free_delivery_over || ''}"></label>
+          <label>الحد الأدنى لقيمة الطلب<input id="wm" type="number" step="0.01" value="${w.min_order || 0}"></label>
+        </div>
+        <label style="margin-top:8px"><input type="checkbox" id="wpub" style="width:auto" ${w.is_published ? 'checked' : ''}> نشر المتجر والموقع الإلكتروني للعامة (يُعرض المنتجات «المنشورة» فقط)</label>
+        ${ad ? '<br><button class="btn teal" style="margin-top:12px" id="ws">حفظ إعدادات الموقع والتوصيل</button>' : ''}
+      </div>
+
+      <div class="card" id="sec-ready">
+        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
+          <b>٣) تقرير جاهزية التشغيل والإطلاق</b>
+          <span>${rd.ready ? tag('open', 'جاهز للتشغيل ✓') : tag('closed', 'ناقص ' + rd.blockers + ' بند')} ${rd.is_published ? tag('ok', 'منشور للعامة') : tag('locked', 'غير منشور')}</span>
+        </div>
         <ul class="ready">${rd.items.map(i => `<li>${i.ok ? '✓' : '✗'} ${esc(i.t)}${!i.ok && i.fix ? ` <span class="sub">— ${esc(i.fix)}</span>` : ''}${i.ok && i.warn ? ` <span class="sub">— تنبيه: ${esc(i.fix || 'يحتاج مراجعة')}</span>` : ''}</li>`).join('')}</ul>
         <p class="sub">المنتجات المنشورة: <span class="n">${rd.published_products}</span>${rd.out_of_stock_products ? ` · نافدة المخزون: <span class="n">${rd.out_of_stock_products}</span>` : ''}</p>
-        ${ad ? '<div class="row noprint"><button class="btn teal" id="sd">ضبط الإعدادات الافتراضية (تعبئة الحقول الفارغة)</button><button class="btn ghost" id="so">استبدال الكل بالقيم الافتراضية…</button></div>' : ''}</div>
-      ${ad ? `<div class="card noprint"><b>متجر جديد</b><div class="row"><label>الرمز (A-Z0-9-)<input id="nc"></label><label>الرابط slug (a-z0-9-)<input id="ns"></label><label>الاسم<input id="nn"></label><label>النوع<select id="nt">${types.map(t => `<option value="${t.code}">${esc(t.name_ar)}</option>`).join('')}</select></label><label>الفرع<select id="nb">${br.map(b => `<option value="${b.code}">${esc(b.name_ar)}</option>`).join('')}</select></label><button class="btn teal" id="na">إنشاء</button></div></div>` : ''}`;
+        ${ad ? '<div class="row noprint" style="margin-top:12px"><button class="btn teal" id="sd">ضبط الإعدادات الافتراضية (تعبئة الحقول الفارغة)</button><button class="btn ghost" id="so">استبدال الكل بالقيم الافتراضية…</button></div>' : ''}
+      </div>
+
+      ${ad ? `<div class="card noprint" id="sec-new">
+        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
+          <b>٤) إضافة متجر جديد</b>
+          <span class="sub">إنشاء متجر إضافي مرتبط بفرع ونوع تجارة مخصص</span>
+        </div>
+        <div class="row">
+          <label>الرمز (A-Z0-9-)<input id="nc" placeholder="STORE-02"></label>
+          <label>الرابط slug (a-z0-9-)<input id="ns" placeholder="branch2"></label>
+          <label style="flex:2">الاسم بالعربية<input id="nn" placeholder="متجر فرع العليا"></label>
+          <label>النوع<select id="nt">${types.map(t => `<option value="${t.code}">${esc(t.name_ar)}</option>`).join('')}</select></label>
+          <label>الفرع<select id="nb">${br.map(b => `<option value="${b.code}">${esc(b.name_ar)}</option>`).join('')}</select></label>
+          <button class="btn teal" id="na">إنشاء المتجر</button>
+        </div>
+      </div>` : ''}`;
     m.querySelectorAll('.tabs [data-s]').forEach(b => b.onclick = () => VIEWS.stores(m, +b.dataset.s));
     const checked = sel => [...m.querySelectorAll(sel + ' input:checked')].map(i => i.value);
     $('#cd')?.addEventListener('click', () => { const t = types.find(x => x.code === $('#ct').value); m.querySelectorAll('#ft input').forEach(i => i.checked = t.default_features.includes(i.value)); });

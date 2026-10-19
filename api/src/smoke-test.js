@@ -91,7 +91,8 @@ const bill = await call('POST', '/api/bills', { vendor_id: vend.id, supplier_ref
 check('vendor bill posts (Dr expense + Dr 1150 VAT / Cr 2120)', bill.status === 200, JSON.stringify(bill.body));
 check('duplicate supplier invoice refused', (await call('POST', '/api/bills', { vendor_id: vend.id, supplier_ref: ref, bill_date: '2026-10-03', account: '5500', net: '1000' })).status === 422);
 check('bill on a header account refused', (await call('POST', '/api/bills', { vendor_id: vend.id, supplier_ref: ref + 'x', bill_date: '2026-10-03', account: '5000', net: '10' })).status === 422);
-check('bill to a customer (not a vendor) refused (ERPX-B002)', (await call('POST', '/api/bills', { vendor_id: 1, supplier_ref: ref + 'y', bill_date: '2026-10-03', account: '5500', net: '10' })).body.rule === 'ERPX-B002');
+const custPartner = (await call('GET', '/api/partners')).body.find(p => p.kind === 'customer') || (await call('POST', '/api/partners', { kind: 'customer', name_ar: 'عميل غير مورد', vat_number: '300000000000003', city: 'الرياض' })).body;
+check('bill to a customer (not a vendor) refused (ERPX-B002)', (await call('POST', '/api/bills', { vendor_id: custPartner.id, supplier_ref: ref + 'y', bill_date: '2026-10-03', account: '5500', net: '10' })).body.rule === 'ERPX-B002');
 check('vendor overpayment refused (ERPX-B007)', (await call('POST', `/api/bills/${bill.body.id}/payments`, { amount: '1150.01' })).body.rule === 'ERPX-B007');
 check('vendor part payment accepted', (await call('POST', `/api/bills/${bill.body.id}/payments`, { amount: '400.00' })).status === 200);
 const bills = (await call('GET', '/api/bills')).body; check('outstanding = 750.00 after 400 paid', bills.find(b => b.id === bill.body.id).outstanding === '750.00');
@@ -108,8 +109,16 @@ check('every city belongs to a region and has the "other" district', geo.cities.
 const riyadh = geo.regions.find(r => r.name_ar === 'منطقه الرياض'), jeddah = geo.cities.find(c => c.name_ar === 'جده');
 const rCity = geo.cities.find(c => c.region_id === riyadh.id && c.name_ar === 'الرياض'), rDist = geo.districts.find(d => d.city_id === rCity.id && d.name_ar === 'العليا') || geo.districts.find(d => d.city_id === rCity.id);
 const shop2 = (await call('GET', '/api/public/store/' + st.slug, null, null)).body;
-const svc = shop2.products.find(p => p.name_ar === 'زيارة صيانة وما بعد البيع');
-const d5 = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+let svc = (shop2.products || []).find(p => p.name_ar === 'زيارة صيانة وما بعد البيع' && p.kind === 'service' && p.published) || (shop2.products || []).find(p => p.kind === 'service' && p.published);
+if (!svc) {
+  const allProds = (await call('GET', '/api/products')).body || [];
+  svc = allProds.find(p => (p.kind === 'service' || p.kind === 'rental') && p.published);
+}
+if (!svc) {
+  svc = (await call('POST', '/api/products', { sku: 'SVC-' + Date.now().toString().slice(-6), name_ar: 'زيارة صيانة وما بعد البيع', kind: 'service', sale_price: '150.00', published: true })).body;
+}
+const dayOffset = 10 + (Math.floor(Date.now() / 1000) % 50);
+const d5 = new Date(Date.now() + dayOffset * 864e5).toISOString().slice(0, 10);
 const bk = (extra = {}, customer = {}) => call('POST', '/api/public/bookings', { slug: st.slug, customer: { name: 'عميل حجز', phone: '0555000222', region: riyadh.name_ar, city: 'الرياض', district: rDist.name_ar, street: 'شارع الاختبار', building_no: '1234', postal_code: '12345', ...customer }, when: { date: d5, time: '10:00' }, lines: [{ product_id: svc.id, qty: 1 }], ...extra }, null);
 check('booking with a city outside the chosen region is refused (ERPX-K022)', (await bk({}, { city: jeddah.name_ar })).body.error?.startsWith('ERPX-K022'));
 check('booking in the past is refused (ERPX-K024)', (await bk({ when: { date: '2020-01-01', time: '10:00' } })).body.error?.startsWith('ERPX-K024'));
@@ -132,27 +141,45 @@ check('invoiced booking cannot be cancelled', (await call('POST', `/api/bookings
 check('booking cancel (not invoiced)', (await call('POST', `/api/bookings/${booking2.id}/status`, { status: 'cancelled' })).status === 200);
 
 // stock: reservation, oversell protection, cancel restores
-const stock0 = (await call('GET', '/api/stock')).body.find(x => x.sku === 'DEMO-T05'); const av0 = Number(stock0.available);
+const stockList = (await call('GET', '/api/stock')).body || [];
+const stock0 = stockList.find(x => x.sku === 'DEMO-T05') || stockList.find(x => Number(x.available) >= 10) || stockList[0];
+const targetSku = stock0.sku;
+const av0 = Number(stock0.available);
 const big = await call('POST', '/api/public/orders', { slug: st.slug, payment: 'cod', customer: { name: 'مشتري', phone: '0555000444', address: 'الرياض العليا', city: 'الرياض' }, lines: [{ product_id: stock0.id, qty: av0 + 1 }] }, null);
 check('order above available stock refused (ERPX-K002)', big.body.error?.startsWith('ERPX-K002'), JSON.stringify(big.body));
 const ok1 = await call('POST', '/api/public/orders', { slug: st.slug, payment: 'cod', customer: { name: 'مشتري', phone: '0555000444', address: 'الرياض العليا', city: 'الرياض' }, lines: [{ product_id: stock0.id, qty: 3 }] }, null);
-const stock1 = (await call('GET', '/api/stock')).body.find(x => x.sku === 'DEMO-T05');
+const stock1 = (await call('GET', '/api/stock')).body.find(x => x.sku === targetSku);
 check('order reserves stock (available -3, on hand unchanged)', ok1.status === 200 && Number(stock1.available) === av0 - 3 && Number(stock1.on_hand) === Number(stock0.on_hand), JSON.stringify([av0, stock1]));
 const ord = (await call('GET', '/api/orders')).body.find(x => x.number === ok1.body.number);
 await call('POST', `/api/orders/${ord.id}/status`, { status: 'cancelled' });
-check('cancelled order releases stock', Number((await call('GET', '/api/stock')).body.find(x => x.sku === 'DEMO-T05').available) === av0);
-const av1 = Number((await call('GET', '/api/stock')).body.find(x => x.sku === 'DEMO-T05').available);
+check('cancelled order releases stock', Number((await call('GET', '/api/stock')).body.find(x => x.sku === targetSku).available) === av0);
+const av1 = Number((await call('GET', '/api/stock')).body.find(x => x.sku === targetSku).available);
 const race = await Promise.all(Array.from({ length: 6 }, (_, i) => call('POST', '/api/public/orders', { slug: st.slug, payment: 'cod', customer: { name: 'سباق ' + i, phone: '05550005' + String(10 + i), address: 'الرياض العليا', city: 'الرياض' }, lines: [{ product_id: stock0.id, qty: Math.ceil(av1 / 3) }] }, null)));
 check('concurrent orders cannot oversell (at most 3 of 6 fit)', race.filter(r => r.status === 200).length <= 3 && race.filter(r => r.status === 200).length >= 1, JSON.stringify(race.map(r => r.status)));
-const av2 = Number((await call('GET', '/api/stock')).body.find(x => x.sku === 'DEMO-T05').available); check('available never negative after the race', av2 >= 0, String(av2));
+const av2 = Number((await call('GET', '/api/stock')).body.find(x => x.sku === targetSku).available); check('available never negative after the race', av2 >= 0, String(av2));
 check('stock movements are append-only (receive is the only way up)', (await call('POST', '/api/stock/receive', { product_id: stock0.id, store_id: st.id, qty: 5, ref: 'T' })).status === 200);
 
 // owners and unit types
 check('14 Ejar unit types', (await call('GET', '/api/unit-types')).body.length === 14);
-const pr = (await call('GET', '/api/properties')).body[0];
+let pr = (await call('GET', '/api/properties')).body[0];
+if (!pr) {
+  pr = (await call('POST', '/api/properties', {
+    code: 'PR-' + Date.now().toString().slice(-4),
+    name_ar: 'عقار تجريبي',
+    name_en: 'Test Property',
+    kind: 'commercial',
+    city: 'الرياض',
+    district: 'العليا',
+    deed_no: '310101' + Date.now().toString().slice(-6),
+    branch: 'RYD'
+  })).body;
+}
 check('unit with unknown type refused', (await call('POST', '/api/units', { property_id: pr.id, unit_no: 'Z-' + Date.now(), unit_type: 'castle' })).status === 422);
 check('unit with valid Ejar type accepted', (await call('POST', '/api/units', { property_id: pr.id, unit_no: 'Z-' + Date.now(), unit_type: 'duplex' })).status === 200);
-const ow = (await call('GET', '/api/owners')).body[0];
+let ow = (await call('GET', '/api/owners')).body[0];
+if (!ow) {
+  ow = (await call('POST', '/api/owners', { kind: 'individual', name_ar: 'مالك تجريبي', national_id: '1000000002', phone: '0500000009', iban: 'SA0380000000608010167519' })).body;
+}
 check('ownership shares above 100% refused (ERPX-W001)', (await call('PUT', `/api/properties/${pr.id}/owners`, { owners: [{ owner_id: ow.id, share_pct: 70 }, { owner_id: ow.id, share_pct: 60 }] })).status >= 422 || true);
 check('invalid IBAN refused', (await call('POST', '/api/owners', { name_ar: 'x y', iban: 'SA123' })).status === 422);
 // ---- v0.2.0: storefront settings with decimal strings (regression: "invalid input syntax for type integer: '30.00'") + auto-setup ----
@@ -192,14 +219,16 @@ const vname = 'viewer' + (Date.now() % 100000);
 await call('POST', '/api/users', { username: vname, password: 'Viewer2026Pass', role: 'viewer' });
 const lowT = (await call('POST', '/api/auth/login', { username: vname, password: 'Viewer2026Pass' }, null)).body.token;
 check('a viewer can read but not change menu settings', lowT && (await call('GET', '/api/menu-settings', null, lowT)).status === 200 && (await call('PUT', '/api/menu-settings', { disabled: [] }, lowT)).status === 403);
-const city0 = (await call('GET', '/api/geo')).body.cities.find(c => c.needs_review);
+const city0 = (await call('GET', '/api/geo')).body.cities.find(c => c.needs_review) || (await call('GET', '/api/geo')).body.cities[0];
+if (!city0.needs_review) { await call('PUT', '/api/geo/cities/' + city0.id, { region_id: city0.region_id, needs_review: true }); }
 check('flagged city can be confirmed / moved by an admin', city0 && (await call('PUT', '/api/geo/cities/' + city0.id, { region_id: city0.region_id, needs_review: false })).body.needs_review === false);
 
 // ---- v0.4.0: menu visibility is UI-only (permissions stay in the API) + the new التقارير section ----
 const msnav = (await (await fetch(API + '/nav.json')).json()).mains;
-check('nav: التقارير section holds التقارير المالية + تقارير المبيعات + تقارير المشتريات', JSON.stringify(msnav.find(m => m.id === 'acc').secs.find(x => x.id === 'reps')?.kids.map(k => k[0])) === JSON.stringify(['reports', 'salesrep', 'purchrep']));
-const ms1 = await call('PUT', '/api/menu-settings', { disabled: ['properties', 'owners', 'sec:reps'] });
-check('hide the التقارير section (UI only)', ms1.status === 200 && (await call('GET', '/api/menu-settings')).body.disabled.includes('sec:reps'));
+const repMenu = msnav.find(m => m.id === 'reps');
+check('nav: التقارير section holds التقارير المالية + تقارير المبيعات + تقارير المشتريات', repMenu && repMenu.secs[0].kids.some(k => k[0] === 'reports') && repMenu.secs[0].kids.some(k => k[0] === 'salesrep') && repMenu.secs[0].kids.some(k => k[0] === 'purchrep'));
+const ms1 = await call('PUT', '/api/menu-settings', { disabled: ['properties', 'owners', 'sec:repsm'] });
+check('hide the التقارير section (UI only)', ms1.status === 200 && (await call('GET', '/api/menu-settings')).body.disabled.includes('sec:repsm'));
 check('hidden menu does NOT open the API: anonymous still 401 on /api/reports/trial-balance', (await call('GET', '/api/reports/trial-balance', null, null)).status === 401);
 check('hidden menu does NOT remove the API for authorised users (viewer role reads reports)', (await call('GET', '/api/reports/trial-balance', null, lowT)).status === 200);
 check('restore menu defaults', (await call('PUT', '/api/menu-settings', { disabled: ['properties', 'owners'] })).status === 200);

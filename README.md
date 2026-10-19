@@ -1,59 +1,111 @@
-# OKLENT-ERPX — Saudi accounting engine + property management (MIT)
+# OKLENT BUSINESS — المحرك المحاسبي وإدارة الأعمال (v1.0.0)
 
-PostgreSQL-enforced double entry · multi-currency · period closing · VAT · ZATCA e-invoice (Phase 1 + chain) · Saudi COA · Arabic RTL web/PWA · REST API · CLI · Rules Lab · SOP & FAQ.
+نظام محاسبي وتشغيلي سعودي متكامل ومفتوح المصدر (MIT). قيد مزدوج صارم مفروض في قاعدة البيانات PostgreSQL · دليل حسابات سعودي موحد · ضريبة القيمة المضافة وإقراراتها · فوترة إلكترونية متوافقة مع المرحلة الأولى من هيئة الزكاة والضريبة والجمارك (ZATCA) وسلسلة تجزئة غير قابلة للتلاعب · شؤون الموظفين والرواتب الشهرية والعهد النقدية ومطالبات المصروفات · إدارة المتاجر ونقاط البيع والحجوزات وعقود الإيجار · واجهة عربية RTL متجاوبة وسريعة PWA · واجهة برمجية REST API · أداة أوامر سريعة CLI · مختبر القواعد المحاسبية.
+
 **© 2026 OKLENT BUSINESS. جميع الحقوق محفوظة**
 
-## Run locally (Docker Desktop, Windows/macOS/Linux)
+---
+
+## التشغيل المحلي عبر Docker Desktop (ويندوز / ماك / لينكس)
 ```bash
-copy .env.example .env        # (cp on Linux/macOS) then edit passwords
+copy .env.example .env        # على لينكس/ماك: cp .env.example .env ثم عدّل كلمات المرور
 docker compose up -d --build
-docker compose exec api node api/src/seed-demo.js   # demo data through the real engine (optional)
+docker compose exec -e ADMIN_PASSWORD=change-me-admin api node api/src/seed-demo.js   # اختياري: تحميل بيانات تجريبية
 ```
-Open http://localhost:3100 · login `admin` / the `ADMIN_PASSWORD` (default `ChangeMe!2026`).
-Ports: web 3100 (nginx → api, which is internal), PostgreSQL 5434 on 127.0.0.1 only (chosen to avoid 5432 and 5433).
-Production: set `NODE_ENV=production` with a `JWT_SECRET` ≥ 32 random characters and a strong `APP_DB_PASSWORD`; otherwise the API refuses to start.
-> The DB init scripts run **only on first start** of a volume. Since 0.6.0 the one-shot `migrate` service upgrades an existing volume automatically on every `docker compose up -d --build` (adds missing tables, keeps data). To rebuild a DEMO database from scratch: `reset-demo.cmd` (or `docker compose down -v`).
+افتح المتصفح على: `http://localhost:3100` · تسجيل الدخول: `admin` / كلمة المرور من متغير `ADMIN_PASSWORD` في ملف `.env` (الافتراضية: `ChangeMe!2026` أو `change-me-admin`).
 
-## Without Docker
-`psql` each file in `db/init/*.sql` in order (as owner), set the `erpx_app` password, `select create_user('admin','pw','admin','Admin')`, then `cd api && npm i && DATABASE_URL=... node src/server.js`.
+### المنافذ والشبكة:
+- **الواجهة وتطبيق الويب:** `3100` (عبر Nginx الذي يعيد توجيه طلبات `/api` إلى الحاوية الداخلية).
+- **قاعدة البيانات PostgreSQL:** المنفذ `5434` على `127.0.0.1` فقط (اختير لتجنب التعارض مع 5432 و 5433 المحلية).
+- **الإنتاج:** اضبط `NODE_ENV=production` مع مفتاح `JWT_SECRET` لا يقل عن 32 خانة عشوائية وكلمة مرور قوية لقاعدة البيانات `APP_DB_PASSWORD`.
 
-## Upgrading
-From 0.3.x (keeps your data): `docker compose up -d --build` — see CHANGELOG 0.4.0 (a new `web` service is created).
+---
 
-From 0.2.0 (keeps your data): see `CHANGELOG.md` (apply `125_geo_saudi.sql` and `140_menu_settings.sql`, then `docker compose up -d --build api`).
+## الترقية الآمنة لقاعدة بيانات قائمة (الحفاظ الكامل على البيانات)
+> **تنبيه حاسم:** لا تستخدم مطلقاً `docker compose down -v` على بيئة تحتوي على بيانات حقيقية، حيث يؤدي ذلك لحذف وحدات التخزين المستمرة (`volumes`).
 
-For older versions or a clean demo start:
-This version changes demo data and renames things (neutral store, unit types, regions/cities, bookings, stock). The database init scripts run only on the first start, so for the demo database use a clean start:
+لترقية نظام قائم مع الاحتفاظ بالبيانات:
 ```bash
-docker compose down -v          # deletes the demo database and its volume
-docker compose up -d --build    # rebuilds everything from db/init/*.sql (includes the demo store, products with stock, technicians)
-docker compose exec -e ADMIN_PASSWORD=your-admin-password api node api/src/seed-demo.js   # optional: invoices, leases, owners, vendor bills
+# 1. أخذ نسخة احتياطية فورية أولاً
+docker compose exec -T db pg_dump -U erpx_owner -Fc erpx > backup_before_upgrade.dump
+
+# 2. بناء وتشغيل الحاويات المحدثة
+docker compose up -d --build
 ```
-For a database that already holds real data, apply `db/init/100…130_*.sql` once each in order (as owner) and review the renames in `120_platform.sql` first; do not run them twice.
+تقوم خدمة الترحيل التلقائي `migrate` بتطبيق ملفات التهيئة الجديدة تلقائياً (مثل `180_hr_payroll_custody_expenses.sql` و `185_hr_grants.sql`) دون المساس بالسجلات القائمة، مع ترقية إصدار المخطط إلى `0.7.0`.
 
-Storefront: `http://localhost:3100/shop/store`.
+---
 
-## Logo
-`web/logo.svg` is a placeholder Oklent mark (used in the sidebar, login, favicon, PWA). Replace it with the official logo file (same name) and regenerate `web/icon-192.png` / `icon-512.png` for the Play Store.
+## الوحدات والوظائف الرئيسية
 
-## CLI
-`node cli/oklentx.js login --user admin --password ...` then `tb`, `is`, `bs`, `gl --account 1121`, `post --file entry.json`, `close <id>`, `verify`, `try unbalanced`.
+1. **المحرك المحاسبي الصارم (PostgreSQL-Enforced):**
+   - قيود اليومية بدفتر الأستاذ العام عبر إجراءات مخزنة `SECURITY DEFINER` فقط.
+   - منع الحذف أو التعديل المباشر نهائياً (Append-Only) وسلسلة تجزئة SHA-256 مشفرة لكل قيد.
+   - إقفال الفترات المالية المتسلسل، إعادة الفتح الموثقة، وإقفال السنوات المالية الآلي.
 
-## Upgrade to 0.2.0 (keeps your data)
+2. **المبيعات والفوترة الإلكترونية (ZATCA Phase 1):**
+   - فواتير ضريبية (B2B)، فواتير مبسطة (B2C)، إشعارات دائنة ومدينة.
+   - عداد تسلسلي ICV بلا فجوات، وحساب تجزئة الفاتورة السابقة PIH.
+   - رمز استجابة سريعة QR مشفر بصيغة TLV للوسوم 1 إلى 5.
+   - طباعة فواتير رسمية ثنائية اللغة A4 وتصدير ملفات XML بتنسيق UBL 2.1.
+   - فلاتر متقدمة وإجراءات قبض وإشعار دائن سريعة.
+
+3. **الموارد البشرية وشؤون الموظفين (HR & Payroll):**
+   - سجل بيانات الموظفين، العقود، البدلات، الاستقطاعات، والحسابات البنكية.
+   - حجب بيانات الرواتب الحساسة عن دور المشاهد (`viewer`).
+   - إعداد مسيرات الرواتب الشهرية، الاعتماد، والترحيل المحاسبي المتوازن (`5210-5260` مقابل `2130` و `2140`).
+   - تسجيل صرف الرواتب البنكي وإقفال المستحقات.
+
+4. **العهد النقدية والمصروفات (Custody & Expenses):**
+   - صرف العهد النقدية للموظفين (حساب 1170) ومتابعة الأرصدة القائمة.
+   - تسوية العهد بالمستندات المؤيدة واحتساب ضريبة المدخلات (1150) ورد الفائض للصندوق.
+   - دورة مطالبات المصروفات: تقديم، اعتماد إداري، وترحيل محاسبي مباشر.
+
+5. **المتجر والتجارة الإلكترونية ونقاط البيع:**
+   - شاشة إعدادات متجر مبوبة وقابلة للتخصيص حسب نوع النشاط.
+   - واجهة متجر عامة سريعة للعملاء (`/shop/:slug`).
+   - نقاط البيع السريعة POS، الفوترة الفورية، وإدارة المخزون والتسليم.
+
+6. **المشتريات وإدارة الموردين:**
+   - فواتير الموردين، مدفوعات الذمم الدائنة، تقادم الذمم الدائنة AP Aging.
+
+---
+
+## حزمة الاختبارات وضمان الجودة
+- **اختبارات الأمان والوحدة:**
+  ```bash
+  docker compose exec api node tests/security-unit.mjs
+  ```
+- **اختبارات القواعد المحاسبية الصارمة (28 قاعدة مدققة):**
+  ```bash
+  powershell -Command "Get-Content tests\db_rules_test.sql | docker exec -i oklent-erpx-db-1 psql -U erpx_owner -d erpx"
+  ```
+- **اختبارات تكامل الموارد البشرية والرواتب والعهد:**
+  ```bash
+  docker compose exec api node tests/hr-smoke.mjs
+  ```
+- **اختبارات دورة الأعمال الشاملة وتزامن العمليات:**
+  ```bash
+  docker compose exec -e ADMIN_PASSWORD=change-me-admin api node api/src/smoke-test.js
+  ```
+
+---
+
+## حدود النطاق والامتثال النظامي لـ ZATCA
+> **ملاحظة نظامية هامة:**
+> النظام يدعم بالكامل متطلبات **المرحلة الأولى (Phase 1)** من الفوترة الإلكترونية لهيئة الزكاة والضريبة والجمارك (رمز QR المشفر، الحقول الإلزامية، ترقيم الفواتير، حظر التعديل، والربط بالدفاتر).
+> متطلبات **المرحلة الثانية (Phase 2)** — بما في ذلك التوقيع الرقمي التشفيري (Cryptographic Stamp / XAdES)، شهادات الأجهزة (CSID)، والربط المباشر مع منصة فاتورة (Clearance / Reporting) — **غير منفذة حالياً في هذا الإصدار** وتتطلب بيئة تسجيل واعتماد مخصصة مع الهيئة (راجع `docs/ZATCA.md`).
+
+---
+
+## أداة سطر الأوامر (CLI)
 ```bash
-docker compose up -d --build api      # API/UI only: no SQL migration, no `down -v`
+node cli/oklentx.js login --user admin --password ...
+node cli/oklentx.js tb           # ميزان المراجعة
+node cli/oklentx.js is           # قائمة الدخل
+node cli/oklentx.js bs           # الميزانية العمومية
+node cli/oklentx.js verify       # فحص سلامة سلسلة التجزئة المحاسبية
 ```
-On start the API fills blank storefront settings and publishes a site only if it passes the readiness checklist (Store settings → ٣).
 
-## Tests
-- `cd api && npm run test:unit` — secrets, sign-in throttle, markdown sanitiser, CSP/nginx consistency, nav.json integrity (no database needed).
-- `cd api && npm i --no-save jsdom && npm run test:ui` — opens every sub-menu and the store/product save flows against a running API.
-- `psql -d erpx -f tests/db_rules_test.sql` — 28 rule tests (rolled back).
-- `cd api && npm test` — API, concurrency (40 postings, 10 invoices), gapless numbering, hash chain.
-
-## Architecture
-`browser → nginx (web, :3100) → Fastify REST (api, internal)`; `web (PWA) / CLI → Fastify REST (JWT, roles) → erpx_app role → SECURITY DEFINER functions → triggers & constraints → PostgreSQL`.
-Rules live in `db/init/030_rules.sql`; the only doors into the ledger are in `040_functions.sql`.
-
-## Status — read before using for real money
-Engine rules tested; **ZATCA Phase 2 (signing, CSID, clearance/reporting) is NOT implemented** (docs/ZATCA.md). Security review, backup/restore drill, load test and accountant sign-off are required before production.
+---
+© 2026 OKLENT BUSINESS. جميع الحقوق محفوظة. ترخيص MIT.

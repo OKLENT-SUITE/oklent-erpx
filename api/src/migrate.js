@@ -11,7 +11,7 @@ import pg from 'pg';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const SCHEMA_EXPECTED = '0.6.0';
+export const SCHEMA_EXPECTED = '0.7.0';
 // objects introduced by 120_platform.sql (all of them must exist together, or none)
 const PLATFORM = ['sa_regions', 'sa_cities', 'sa_districts', 'unit_types', 'owners', 'property_ownership', 'technicians', 'bookings', 'booking_lines', 'stock_moves'];
 const BASE = ['company', 'accounts', 'journal_entries', 'stores', 'store_site', 'products', 'online_orders', 'vendor_bills'];   // everything from 010..110
@@ -66,7 +66,7 @@ export async function migrate({ ownerUrl, root, log }) {
     // idempotent catch-up files: always safe to re-run
     const { rows: [v] } = await client.query("SELECT value->>'version' v FROM app_settings WHERE key='schema'").catch(() => ({ rows: [{}] }));
     const priv = (await client.query("SELECT bool_and(has_table_privilege('erpx_app', 'public.' || t, 'SELECT')) ok FROM unnest($1::text[]) t", [PLATFORM])).rows[0].ok;
-    if (v?.v !== SCHEMA_EXPECTED || !priv) for (const f of ['150_schema_version.sql', '160_fixes_0_5.sql', '170_fixes_0_6.sql', '175_grants.sql']) { await applyFile(client, dir, f, log); applied.push(f); }
+    if (v?.v !== SCHEMA_EXPECTED || !priv) for (const f of ['150_schema_version.sql', '160_fixes_0_5.sql', '170_fixes_0_6.sql', '175_grants.sql', '180_hr_payroll_custody_expenses.sql', '185_hr_grants.sql']) { await applyFile(client, dir, f, log); applied.push(f); }
     const missing = await verifySchema(client, dir);
     return { ran: true, applied, missing };
   } catch (e) { return { ran: false, error: e.message }; }

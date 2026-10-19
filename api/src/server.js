@@ -10,6 +10,7 @@ import { q, tx } from './db.js';
 import { issueInvoice, httpErr } from './invoicing.js';
 import { RULES } from './rules-catalog.js';
 import { registerCommerce } from './routes-commerce.js';
+import { registerHR } from './routes-hr.js';
 import { loadMenuCatalog } from './menu-catalog.js';
 import { riyadhToday } from './dates.js';
 
@@ -256,6 +257,7 @@ route('PUT', '/api/menu-settings', 'admin', async req => {
 });
 
 registerCommerce({ app, route, auth, q, tx, issueInvoice, httpErr, UPLOAD_DIR });
+registerHR({ app, route, auth, q, tx, httpErr, dateOr, today });
 
 const port = Number(process.env.PORT || 3100);
 await app.listen({ port, host: '0.0.0.0' });

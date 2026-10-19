@@ -98,3 +98,23 @@ input[type=color]{height:40px;padding:3px;cursor:pointer}
 dialog.imgdlg{border:0;border-radius:18px;padding:20px;width:min(94vw,460px);box-shadow:0 30px 80px #0007}dialog.imgdlg::backdrop{background:#0008}dialog.imgdlg h3{margin:0 0 4px}
 
 .pthumb.pimg{width:100%;height:auto;aspect-ratio:1/1;border-radius:10px;font-size:34px}.pcard{align-content:start}td .pthumb{width:36px;height:36px;margin-inline-end:6px}
+
+/* Accessibility & Focus tokens */
+:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;background:#f8fafc;padding:10px 12px;border-radius:12px;border:1px solid var(--line)}
+.filter-bar input,.filter-bar select{width:auto;min-width:140px;padding:6px 10px;font-size:13px}
+.actions-cell{display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+.btn-icon{padding:5px 8px;display:inline-flex;align-items:center;justify-content:center;gap:4px;border-radius:8px;font-size:12px}
+.empty-box{text-align:center;padding:36px 16px;color:var(--muted)}
+.empty-box .ico{margin-bottom:8px;opacity:.5}
+dialog.app-modal{border:0;border-radius:20px;padding:24px;width:min(94vw,620px);max-height:90vh;overflow-y:auto;box-shadow:0 25px 70px #0008;background:#fff}
+dialog.app-modal::backdrop{background:#0007;backdrop-filter:blur(2px)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.modal-header h3{margin:0;font-size:18px;display:flex;align-items:center;gap:8px}
+.btn-close{background:none;border:0;font-size:22px;cursor:pointer;color:var(--muted);line-height:1;padding:0 4px}
+.form-section{background:#f9fafb;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+.form-section-title{font-weight:700;font-size:13px;color:var(--ink);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.totals-summary{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px;margin:12px 0}
+.totals-summary .row-sum{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}
+.totals-summary .row-sum.grand{font-size:16px;font-weight:800;border-top:1px dashed #86efac;margin-top:6px;padding-top:6px;color:#166534}
+

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// OKLENT-ERPX CLI — talks to the REST API. OKLENT.NET
+// OKLENT BUSINESS CLI — talks to the REST API. https://oklent.net/
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import os from 'node:os'; import path from 'node:path';
 const CFG = path.join(os.homedir(), '.oklentx.json');
@@ -13,7 +13,8 @@ async function call(m, p, body) {
   const j = await r.json().catch(() => ({})); if (!r.ok) { console.error(`✗ ${r.status} ${j.error || ''}`); process.exit(1); } return j;
 }
 const money = v => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }).padStart(14);
-const HELP = `oklentx <command>
+const HELP = `OKLENT BUSINESS CLI (v1.0.0) — إدارة الأعمال والمحرك المحاسبي
+oklentx <command>
   login --user admin --password ***      accounts                         periods
   tb [--from D --to D]                   is [--from D --to D]             bs [--to D]
   gl --account 1121 [--from D --to D]    vat [--from D --to D]            aging

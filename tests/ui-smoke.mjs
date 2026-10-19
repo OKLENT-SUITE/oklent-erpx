@@ -68,25 +68,28 @@ const nav = JSON.parse(fs.readFileSync(path.join(root, 'web/nav.json'), 'utf8'))
 const css = fs.readFileSync(path.join(root, 'web/style.css'), 'utf8');
 const chk = (name, ok, extra = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  → ' + extra}`); };
 const heads = () => [...doc.querySelectorAll('.nav-h span:nth-child(2)')].map(x => x.textContent);
-chk('main menus in approved order, النظام last', JSON.stringify(heads()) === JSON.stringify(['إدارة الأعمال', 'المتجر', 'الإدارة', 'النظام']), JSON.stringify(heads()));
-const acc = nav.find(m => m.id === 'acc');
-chk('إدارة الأعمال sections: المبيعات / المشتريات / المخزون / المالية / التقارير', JSON.stringify(acc.secs.map(x => x.t)) === JSON.stringify(['المبيعات', 'المشتريات', 'المخزون', 'المالية', 'التقارير']));
-chk('التقارير holds التقارير المالية + تقارير المبيعات + تقارير المشتريات; المالية and المشتريات no longer carry reports', JSON.stringify(acc.secs.find(x => x.id === 'reps').kids.map(k => k[1])) === JSON.stringify(['التقارير المالية', 'تقارير المبيعات', 'تقارير المشتريات']) && !acc.secs.find(x => x.id === 'fin').kids.some(k => k[0] === 'reports') && !acc.secs.find(x => x.id === 'purch').kids.some(k => k[0] === 'purchrep'));
-chk('النظام: «لوحة التحكم» (same name as the screen title), no «الرئيسية»', JSON.stringify(nav.find(m => m.id === 'system').secs[0].kids.map(k => k[1])) === JSON.stringify(['لوحة التحكم', 'مختبر القواعد']));
-chk('sales order: عقود الإيجار first, الفواتير والتحصيل second (sales report moved to التقارير)', acc.secs[0].kids[0][1] === 'عقود الإيجار' && acc.secs[0].kids[1][1] === 'الفواتير والتحصيل' && !acc.secs[0].kids.some(k => k[0] === 'salesrep'));
-chk('no property main menu; docs live under الإدارة', !nav.some(m => /الأملاك|العقارات/.test(m.t)) && nav.find(m => m.id === 'admin').secs.some(x => x.t === 'التوثيق'));
+const expectedHeads = ['لوحة التحكم', 'العمليات', 'الموارد البشرية', 'المالية', 'المتجر', 'التقارير', 'الإعدادات'];
+chk('main menus in approved 7 sections order', JSON.stringify(heads()) === JSON.stringify(expectedHeads), JSON.stringify(heads()));
+const hrMain = nav.find(m => m.id === 'hr');
+chk('الموارد البشرية contains شؤون الموظفين (الموظفون / الرواتب / العهد)', JSON.stringify(hrMain.secs[0].kids.map(k => k[1])) === JSON.stringify(['الموظفون', 'الرواتب', 'العهد']));
+chk('المالية contains المصروفات والقيود ودليل الحسابات', nav.find(m => m.id === 'fin').secs[0].kids.some(k => k[0] === 'expenses'));
+chk('التقارير holds التقارير المالية + تقارير المبيعات + تقارير المشتريات + تقارير الموارد البشرية', JSON.stringify(nav.find(m => m.id === 'reps').secs[0].kids.map(k => k[1])) === JSON.stringify(['التقارير المالية', 'تقارير المبيعات', 'تقارير المشتريات', 'تقارير الموارد البشرية']));
+chk('لوحة التحكم: «لوحة التحكم» و«مختبر القواعد»', JSON.stringify(nav.find(m => m.id === 'dash').secs[0].kids.map(k => k[1])) === JSON.stringify(['لوحة التحكم', 'مختبر القواعد']));
+chk('docs live under الإعدادات', nav.find(m => m.id === 'admin').secs.some(x => x.t === 'التوثيق'));
 const px = re => +(new RegExp(re + '[^}]*?font-size:(\\d+(?:\\.\\d+)?)px').exec(css)?.[1] || 0);
 chk('font scale: main 16 > section 14 > item 13', px('\\.nav-h\\{') === 16 && px('\\.nav-sh\\{') === 14 && px('\\.nav-k a\\{') === 13, [px('\\.nav-h\\{'), px('\\.nav-sh\\{'), px('\\.nav-k a\\{')].join('/'));
-// accordion: open إدارة الأعمال -> sections are collapsed; click one -> only that one opens
-{ const h = doc.querySelector('.nav-h[data-g="acc"]'); if (!h.parentElement.classList.contains('open')) h.click(); await sleep(200); }
-const accEl = doc.querySelector('.nav-h[data-g="acc"]').parentElement;
-accEl.querySelectorAll('.nav-sec.open > .nav-sh').forEach(h => h.click()); await sleep(100);   // earlier clicks left sections open (state is remembered); collapse them
-chk('إدارة الأعمال shows 5 sections; sub-items stay collapsed until clicked', accEl.classList.contains('open') && accEl.querySelectorAll('.nav-sh').length === 5 && accEl.querySelectorAll('.nav-sec.open').length === 0, String(accEl.querySelectorAll('.nav-sec.open').length));
-accEl.querySelector('.nav-sh[data-s="purch"]').click(); await sleep(150);
-chk('click a section -> its items open', accEl.querySelector('.nav-sec.open')?.querySelector('.nav-sh')?.dataset.s === 'purch' && accEl.querySelectorAll('.nav-sec.open').length === 1);
+// accordion: open العمليات -> sections are collapsed; click one -> only that one opens
+{ const h = doc.querySelector('.nav-h[data-g="ops"]'); if (h && !h.parentElement.classList.contains('open')) h.click(); await sleep(200); }
+const opsEl = doc.querySelector('.nav-h[data-g="ops"]')?.parentElement;
+if (opsEl) {
+  opsEl.querySelectorAll('.nav-sec.open > .nav-sh').forEach(h => h.click()); await sleep(100);
+  chk('العمليات shows 3 sections (المبيعات / المشتريات / المخزون)', opsEl.querySelectorAll('.nav-sh').length === 3);
+  opsEl.querySelector('.nav-sh[data-s="purch"]')?.click(); await sleep(150);
+  chk('click section -> items open', opsEl.querySelector('.nav-sec.open')?.querySelector('.nav-sh')?.dataset.s === 'purch');
+}
 // visibility settings: hide POS, check it disappears, restore
 await open_('menus');
-const pos = doc.querySelector('input[data-id="pos"]'); chk('settings screen lists the switches', !!pos && !!doc.querySelector('input[data-id="main:acc"]') && doc.querySelector('input[data-id="users"]')?.disabled !== false || !doc.querySelector('input[data-id="users"]'));
+const pos = doc.querySelector('input[data-id="pos"]'); chk('settings screen lists the switches', !!pos && !!doc.querySelector('input[data-id="main:ops"]') && doc.querySelector('input[data-id="users"]')?.disabled !== false || !doc.querySelector('input[data-id="users"]'));
 pos.checked = false; pos.dispatchEvent(new w.Event('change')); await sleep(200);
 await flow('save menu visibility (hide نقاط البيع)', async () => { doc.querySelector('#sv').click(); });
 chk('hidden item is gone from the sidebar', !doc.querySelector('aside a[data-v="pos"]'));
@@ -101,7 +104,7 @@ await open_('journal');
 const setHidden = async list => (await realFetch(BASE + '/api/menu-settings', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + j.token }, body: JSON.stringify({ disabled: list }) })).status;
 chk('another admin hides the screen I am on (قيود اليومية)', await setHidden(['properties', 'owners', 'journal']) === 200);
 w.dispatchEvent(new w.Event('focus')); await sleep(1500);
-chk('→ my screen falls back to a visible one, sidebar intact, nothing stuck on loading', !doc.querySelector('aside a[data-v="journal"]') && !!doc.querySelector('aside a.on') && (doc.querySelector('#main')?.textContent || '').trim().length > 20 && !/جارٍ التحميل/.test(doc.querySelector('#main')?.textContent || '') && doc.querySelectorAll('.nav-h').length === 4, doc.querySelector('aside a.on')?.textContent);
+chk('→ my screen falls back to a visible one, sidebar intact, nothing stuck on loading', !doc.querySelector('aside a[data-v="journal"]') && !!doc.querySelector('aside a.on') && (doc.querySelector('#main')?.textContent || '').trim().length > 20 && !/جارٍ التحميل/.test(doc.querySelector('#main')?.textContent || '') && doc.querySelectorAll('.nav-h').length === 7, doc.querySelector('aside a.on')?.textContent);
 chk('restore: screen is back', await setHidden(['properties', 'owners']) === 200); w.dispatchEvent(new w.Event('focus')); await sleep(1200);
 chk('→ قيود اليومية visible again', !!doc.querySelector('aside a[data-v="journal"]'));
 await open_('geo'); { const nums = [...(doc.querySelectorAll('.kpi b') || [])].map(x => Number(x.textContent)); chk('geo screen: 13 regions, >= 134 cities, >= 1329 districts', nums[0] === 13 && nums[1] >= 134 && nums[2] >= 1329, JSON.stringify(nums)); }

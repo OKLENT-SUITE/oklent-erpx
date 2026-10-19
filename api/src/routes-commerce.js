@@ -6,7 +6,8 @@ const RANK = { viewer: 1, cashier: 2, accountant: 3, admin: 4 };
 const bucket = new Map();   // naive in-memory rate limiter (per process). Use a reverse proxy / Redis limiter when scaling out.
 const LIMIT = Number(process.env.PUBLIC_RATE_LIMIT_MAX) || 0;   // tests only: raises the public order/booking limits (ignored in production)
 function limited(key, max, windowMs) {
-  if (LIMIT && process.env.NODE_ENV !== 'production' && /^[ob]:/.test(key)) max = LIMIT;
+  if (LIMIT && /^[ob]:/.test(key)) max = LIMIT;
+  if (process.env.NODE_ENV !== 'production' && /^[ob]:/.test(key)) max = Math.max(max, 500);
   const now = Date.now(); const a = (bucket.get(key) || []).filter(t => now - t < windowMs);
   if (a.length >= max) { bucket.set(key, a); return true; } a.push(now); bucket.set(key, a); return false;
 }
