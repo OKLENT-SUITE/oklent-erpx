@@ -1,6 +1,6 @@
 // Commerce / store / admin screens. Installed into VIEWS by app.js. https://oklent.net/
 export function installCommerce(VIEWS, X) {
-  const { api, esc, money, today, head, foot, table, num, tag, guard, toast, $, done, csv } = X;
+  const { api, esc, money, today, head, foot, table, num, tag, guard, toast, $, done, csv, printDoc } = X;
   const me = () => X.getMe();
   const can = (...r) => r.includes(me().role);
   const ST = { new: ['closed', 'جديد'], confirmed: ['asset', 'مؤكد'], fulfilled: ['open', 'مُسلَّم'], cancelled: ['locked', 'ملغى'], pending: ['closed', 'معلّقة'], matched: ['open', 'مطابقة'], rejected: ['locked', 'مرفوضة'] };
@@ -45,11 +45,12 @@ export function installCommerce(VIEWS, X) {
   // ================= المنتجات والعروض =================
   VIEWS.products = async function (m, tab = 'products') {
     const [prods, offers, tc] = await Promise.all([api('/products'), api('/offers'), api('/tax-codes')]); const ed = can('admin', 'accountant');
-    m.innerHTML = head('المنتجات والعروض', 'السعر بدون ضريبة. الخصم والضريبة يُحسبان في قاعدة البيانات لا في المتصفح.') + '<div class="tabs"></div><div id="tb"></div>';
+    m.innerHTML = head('المنتجات والعروض', 'السعر بدون ضريبة. الخصم والضريبة يُحسبان في قاعدة البيانات لا في المتصفح.', '<button class="btn" id="pr-prods">🖨️ طباعة المنتجات</button>') + '<div class="tabs"></div><div id="prod-edit-box"></div><div id="tb"></div>';
+    if ($('#pr-prods')) $('#pr-prods').onclick = () => printDoc('دليل المنتجات والخدمات والأسعار', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'اسم المنتج' }, { k: 'category', t: 'التصنيف' }, { ...num('sale_price'), t: 'السعر بدون ضريبة' }, { t: 'النوع', f: r => ({ goods: 'بضاعة', service: 'خدمة', rental: 'تأجير' })[r.kind] }, { t: 'المخزون', f: r => r.stock_tracked ? 'متتبَّع' : 'غير متتبَّع' }], prods), { subtitle: 'قائمة الأصناف والأسعار المعتمدة' });
     const draw = t => { tabs(m, [['products', 'المنتجات والخدمات'], ['offers', 'العروض والخصومات']], t, draw);
       $('#tb').innerHTML = t === 'products' ? `<div class="card">${table([{ t: 'الصورة', f: r => thumb(r.image_url) }, { k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'الاسم' }, { t: 'النوع', f: r => ({ goods: 'بضاعة', service: 'خدمة', rental: 'تأجير' })[r.kind] }, { k: 'category', t: 'التصنيف' }, { ...num('sale_price'), t: 'السعر بدون ضريبة' }, { ...num('unit_discount'), t: 'الخصم الساري' },
           { t: 'الإيراد', f: r => r.revenue_account }, { t: 'المخزون', f: r => r.kind !== 'goods' ? '—' : r.stock_tracked ? tag('open', 'متتبَّع') : tag('closed', 'غير متتبَّع') }, { t: 'في المتجر', f: r => r.published ? tag('open', 'منشور') : tag('closed', 'مخفي') },
-          { t: '', f: r => ed ? `<span class="noprint"><button class="btn ghost sm" data-pub="${r.id}" data-v="${r.published}">${r.published ? 'إخفاء' : 'نشر'}</button> <button class="btn ghost sm" data-img="${r.id}">الصورة</button> <button class="btn ghost sm" data-pr="${r.id}">السعر</button>${r.kind === 'goods' && !r.stock_tracked ? ` <button class="btn teal sm" data-tr="${r.id}">تتبّع المخزون</button>` : ''}</span>` : '' }], prods)}</div>
+          { t: '', f: r => ed ? `<span class="noprint"><button class="btn ghost sm" data-ed-prod="${r.id}">تعديل</button> <button class="btn ghost sm" data-pub="${r.id}" data-v="${r.published}">${r.published ? 'إخفاء' : 'نشر'}</button> <button class="btn ghost sm" data-img="${r.id}">الصورة</button> <button class="btn ghost sm" data-pr="${r.id}">السعر</button>${r.kind === 'goods' && !r.stock_tracked ? ` <button class="btn teal sm" data-tr="${r.id}">تتبّع المخزون</button>` : ''}</span>` : '' }], prods)}</div>
         ${ed ? `<div class="card noprint"><b>منتج / خدمة جديدة</b><div class="row"><label>الرمز SKU<input id="ps"></label><label style="flex:2">الاسم<input id="pn"></label><label>النوع<select id="pk"><option value="goods">بضاعة (مبيعات الألعاب 4200)</option><option value="rental">تأجير (4100)</option><option value="service">خدمة / صيانة (4300)</option></select></label>
           <label>التصنيف<input id="pc"></label><label>السعر بدون ضريبة<input id="pp" type="number" step="0.01"></label><label>الضريبة<select id="pt">${tc.map(x => `<option value="${x.code}">${esc(x.name_ar)}</option>`).join('')}</select></label>
           <label>تتبّع المخزون (بضاعة فقط)<select id="pst"><option value="0">لا</option><option value="1">نعم</option></select></label><label>الكمية الافتتاحية<input id="pq" type="number" min="0" step="1" value="0"></label>
@@ -70,18 +71,48 @@ export function installCommerce(VIEWS, X) {
       m.querySelectorAll('[data-pub]').forEach(b => b.onclick = guard(async () => { await api('/products/' + b.dataset.pub, { method: 'PUT', body: { published: b.dataset.v !== 'true' } }); reload(); }));
       m.querySelectorAll('[data-tr]').forEach(b => b.onclick = guard(async () => { const q = prompt('الكمية الافتتاحية الموجودة فعلاً (0 إن لم يوجد رصيد):', '0'); if (q === null) return; await api('/products/' + b.dataset.tr, { method: 'PUT', body: { stock_tracked: true, opening_qty: q } }); toast('أصبح المنتج يتتبّع المخزون'); reload(); }));
       m.querySelectorAll('[data-pr]').forEach(b => b.onclick = guard(async () => { const v = prompt('السعر الجديد بدون ضريبة:'); if (!v) return; await api('/products/' + b.dataset.pr, { method: 'PUT', body: { sale_price: v } }); reload(); }));
-      m.querySelectorAll('[data-of]').forEach(b => b.onclick = guard(async () => { await api('/offers/' + b.dataset.of, { method: 'PUT', body: { is_active: b.dataset.a !== 'true' } }); reload(); })); };
+      m.querySelectorAll('[data-of]').forEach(b => b.onclick = guard(async () => { await api('/offers/' + b.dataset.of, { method: 'PUT', body: { is_active: b.dataset.a !== 'true' } }); reload(); }));
+      m.querySelectorAll('[data-ed-prod]').forEach(b => b.onclick = () => {
+        const p = prods.find(x => x.id === +b.dataset.edProd); if (!p) return;
+        $('#prod-edit-box').innerHTML = `<div class="card noprint"><b>تعديل المنتج / الخدمة: ${esc(p.name_ar)} (${esc(p.sku)})</b>
+          <div class="row">
+            <label style="flex:2">الاسم<input id="med-n" value="${esc(p.name_ar)}"></label>
+            <label>التصنيف<input id="med-c" value="${esc(p.category || '')}"></label>
+            <label>السعر بدون ضريبة<input id="med-p" type="number" step="0.01" value="${p.sale_price}"></label>
+            <label>تتبّع المخزون<select id="med-st"><option value="false" ${!p.stock_tracked ? 'selected' : ''}>لا</option><option value="true" ${p.stock_tracked ? 'selected' : ''}>نعم</option></select></label>
+            <label>الحالة في المتجر<select id="med-pub"><option value="true" ${p.published ? 'selected' : ''}>منشور</option><option value="false" ${!p.published ? 'selected' : ''}>مخفي</option></select></label>
+            <button class="btn teal" id="med-save">حفظ التعديلات</button>
+            <button class="btn ghost" id="med-cancel">إلغاء</button>
+          </div></div>`;
+        $('#med-cancel').onclick = () => { $('#prod-edit-box').innerHTML = ''; };
+        $('#med-save').onclick = guard(async () => {
+          await api('/products/' + p.id, {
+            method: 'PUT',
+            body: {
+              name_ar: $('#med-n').value,
+              category: $('#med-c').value,
+              sale_price: $('#med-p').value,
+              stock_tracked: $('#med-st').value === 'true',
+              published: $('#med-pub').value === 'true'
+            }
+          });
+          toast('تم تعديل المنتج'); reload();
+        });
+        $('#prod-edit-box').scrollIntoView?.({ behavior: 'smooth' });
+      });
+    };
     draw(tab); done(m);
   };
 
   // ================= الحوالات =================
   VIEWS.transfers = async function (m) {
     const [tr, pt] = await Promise.all([api('/transfers'), api('/partners')]); const ed = can('admin', 'accountant');
-    m.innerHTML = head('الحوالات البنكية', 'سجّل الحوالة الواردة ثم طابقها مع فاتورة: يُنشأ قيد القبض تلقائياً ولا يُسمح بدفع أكثر من المتبقي.') +
+    m.innerHTML = head('الحوالات البنكية', 'سجّل الحوالة الواردة ثم طابقها مع فاتورة: يُنشأ قيد القبض تلقائياً ولا يُسمح بدفع أكثر من المتبقي.', '<button class="btn" id="pr-tr">🖨️ طباعة الحوالات</button>') +
       `<div class="card">${table([{ k: 'transfer_date', t: 'التاريخ' }, { k: 'reference', t: 'المرجع' }, { k: 'partner', t: 'العميل' }, num('amount'), { t: 'الحالة', f: r => st(r.status) }, { t: 'الفاتورة', f: r => esc(r.invoice_no || '') },
         { t: '', f: r => r.status === 'pending' && ed ? `<span class="noprint"><button class="btn teal sm" data-m="${r.id}">مطابقة</button> <button class="btn coral sm" data-r="${r.id}">رفض</button></span>` : '' }], tr)}</div>
       <div id="cand"></div><div class="card noprint"><b>تسجيل حوالة واردة</b><div class="row"><label>المرجع / رقم العملية<input id="tr"></label><label>التاريخ<input type="date" id="td" value="${today()}"></label><label>المبلغ<input type="number" step="0.01" id="ta"></label>
       <label>العميل<select id="tp"><option value="">—</option>${pt.map(p => `<option value="${p.id}">${esc(p.name_ar)}</option>`).join('')}</select></label><label>حساب البنك<select id="tb"><option value="1121">1121 البنك الأهلي</option><option value="1122">1122 مدى/بطاقات</option></select></label><button class="btn teal" id="ts">تسجيل</button></div></div>`;
+    $('#pr-tr').onclick = () => printDoc('سجل الحوالات البنكية الواردة', table([{ k: 'transfer_date', t: 'التاريخ' }, { k: 'reference', t: 'المرجع' }, { k: 'partner', t: 'العميل' }, num('amount', 'المبلغ'), { t: 'الحالة', f: r => (ST[r.status] ? ST[r.status][1] : r.status) }, { k: 'invoice_no', t: 'الفاتورة' }], tr), { subtitle: 'سجل الحوالات والمطابقات البنكية' });
     $('#ts').onclick = guard(async () => { await api('/transfers', { method: 'POST', body: { reference: $('#tr').value, transfer_date: $('#td').value, amount: $('#ta').value, partner_id: $('#tp').value || undefined, bank_account: $('#tb').value } }); toast('سُجّلت'); VIEWS.transfers(m); });
     m.querySelectorAll('[data-m]').forEach(b => b.onclick = guard(async () => { const c = await api(`/transfers/${b.dataset.m}/candidates`);
       $('#cand').innerHTML = `<div class="card"><b>اختر الفاتورة المطابقة</b>${table([{ k: 'number', t: 'الفاتورة' }, { k: 'partner', t: 'العميل' }, num('outstanding'), { t: '', f: r => `<button class="btn amber sm" data-i="${r.id}">اعتماد</button>` }], c)}</div>`;
@@ -92,14 +123,41 @@ export function installCommerce(VIEWS, X) {
   // ================= البيع الإلكتروني =================
   VIEWS.orders = async function (m) {
     const [orders, stores] = await Promise.all([api('/orders'), api('/stores')]); const ed = can('admin', 'accountant'), cs = can('admin', 'accountant', 'cashier');
-    m.innerHTML = head('البيع الإلكتروني', 'طلبات المتجر العام. المبالغ مجمّدة بعد الطلب؛ الفوترة تُنشئ فاتورة ZATCA وقيداً محاسبياً.') +
+    m.innerHTML = head('البيع الإلكتروني', 'طلبات المتجر العام. المبالغ مجمّدة بعد الطلب؛ الفوترة تُنشئ فاتورة ZATCA وقيداً محاسبياً.', '<button class="btn" id="pr-orders">🖨️ طباعة قائمة الطلبات</button>') +
       `<div class="card noprint"><b>روابط المتاجر</b><p>${stores.filter(s => s.features.includes('online_shop')).map(s => `<a href="/shop/${s.slug}" target="_blank" class="btn ghost sm">${esc(s.name_ar)} ↗ ${s.is_published ? '' : '(غير منشور)'}</a>`).join(' ') || 'لا متجر مفعّل — فعّل «المتجر الإلكتروني» من إعدادات المتجر'}</p></div>
       <div class="card">${table([{ k: 'number', t: 'الطلب' }, { t: 'التاريخ', f: r => r.created_at.slice(0, 10) }, { k: 'customer_name', t: 'العميل' }, { k: 'phone', t: 'الجوال' }, { k: 'city', t: 'المدينة' }, { t: 'الدفع', f: r => PAY[r.payment_method] || r.payment_method }, num('total'), { t: 'الحالة', f: r => st(r.status) }, { k: 'invoice_no', t: 'الفاتورة' },
         { t: '', f: r => `<span class="noprint"><button class="btn ghost sm" data-d="${r.id}">تفاصيل</button> ${cs && r.status === 'new' ? `<button class="btn sm" data-s="confirmed" data-i="${r.id}">تأكيد</button>` : ''}${cs && r.status === 'confirmed' ? `<button class="btn teal sm" data-s="fulfilled" data-i="${r.id}">تسليم</button>` : ''}${cs && ['new', 'confirmed'].includes(r.status) && !r.invoice_id ? `<button class="btn coral sm" data-s="cancelled" data-i="${r.id}">إلغاء</button>` : ''}${ed && !r.invoice_id && r.status !== 'cancelled' ? `<button class="btn amber sm" data-f="${r.id}">فوترة</button>` : ''}</span>` }], orders)}</div><div id="od"></div>`;
+    $('#pr-orders').onclick = () => printDoc('سجل طلبات المتجر الإلكتروني', table([{ k: 'number', t: 'الطلب' }, { t: 'التاريخ', f: r => r.created_at.slice(0, 10) }, { k: 'customer_name', t: 'العميل' }, { k: 'phone', t: 'الجوال' }, { k: 'city', t: 'المدينة' }, { t: 'الدفع', f: r => PAY[r.payment_method] || r.payment_method }, num('total', 'المبلغ'), { t: 'الحالة', f: r => (ST[r.status] ? ST[r.status][1] : r.status) }, { k: 'invoice_no', t: 'الفاتورة' }], orders), { subtitle: 'سجل طلبات ومبيعات المتجر الإلكتروني' });
     m.querySelectorAll('[data-s]').forEach(b => b.onclick = guard(async () => { await api(`/orders/${b.dataset.i}/status`, { method: 'POST', body: { status: b.dataset.s } }); VIEWS.orders(m); }));
     m.querySelectorAll('[data-f]').forEach(b => b.onclick = guard(async () => { const r = await api(`/orders/${b.dataset.f}/invoice`, { method: 'POST' }); toast('صدرت الفاتورة ' + r.number); VIEWS.orders(m); }));
     m.querySelectorAll('[data-d]').forEach(b => b.onclick = guard(async () => { const o = await api('/orders/' + b.dataset.d);
-      $('#od').innerHTML = `<div class="card"><b>${o.number}</b> — ${esc(o.address)} ${o.notes ? '· ' + esc(o.notes) : ''}${table([{ k: 'description', t: 'البند' }, { k: 'qty', t: 'كمية' }, num('unit_price'), num('discount'), num('net'), num('vat')], o.lines)}</div>`; })); done(m);
+      $('#od').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><b>تفاصيل الطلب: ${esc(o.number)}</b><button class="btn sm noprint" id="pr-ord-slip">🖨️ طباعة إشعار / بوليصة الطلب</button></div>
+        <p><b>العميل:</b> ${esc(o.customer_name)} (${esc(o.phone || '')}) · <b>العنوان:</b> ${esc(o.city || '')} - ${esc(o.address || '')} ${o.notes ? '· <b>ملاحظات:</b> ' + esc(o.notes) : ''}</p>
+        ${table([{ k: 'description', t: 'البند' }, { k: 'qty', t: 'كمية' }, num('unit_price'), num('discount'), num('net'), num('vat')], o.lines)}<h4 class="n">الإجمالي: ${money(o.total)} ر.س</h4></div>`;
+      $('#pr-ord-slip').onclick = () => {
+        const oMeta = `
+          <div class="p-meta-item"><span class="p-meta-label">رقم الطلب:</span><span class="p-meta-val">${esc(o.number)}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">تاريخ الطلب:</span><span class="p-meta-val">${esc(String(o.created_at).slice(0, 16).replace('T', ' '))}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">العميل:</span><span class="p-meta-val">${esc(o.customer_name)} (${esc(o.phone || '')})</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">عنوان التوصيل:</span><span class="p-meta-val">${esc(o.city || '')} — ${esc(o.address || '')}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">طريقة الدفع:</span><span class="p-meta-val">${esc(PAY[o.payment_method] || o.payment_method)}</span></div>
+          ${o.notes ? `<div class="p-meta-item"><span class="p-meta-label">ملاحظات:</span><span class="p-meta-val">${esc(o.notes)}</span></div>` : ''}
+        `;
+        const oTable = table([{ k: 'description', t: 'البند / المنتج' }, { k: 'qty', t: 'الكمية' }, num('unit_price', 'سعر الوحدة'), num('discount', 'الخصم'), num('net', 'الصافي'), num('vat', 'الضريبة')], o.lines) +
+          `<div class="p-total-box"><b>الإجمالي النهائي:</b> ${money(o.total)} ر.س</div>`;
+        printDoc(`إشعار طلب وتوصيل (${o.number})`, oTable, {
+          ref: o.number,
+          meta: oMeta,
+          subtitle: 'بوليصة تجهيز وتسليم طلب متجر إلكتروني',
+          signatures: [
+            { title: 'مسؤول التجهيز والشحن' },
+            { title: 'مندوب التوصيل' },
+            { title: 'توقيع المستلم' }
+          ]
+        });
+      };
+      $('#od').scrollIntoView?.({ behavior: 'smooth' });
+    })); done(m);
   };
 
   // ================= نقاط البيع =================
@@ -127,7 +185,9 @@ export function installCommerce(VIEWS, X) {
       `<div class="card noprint"><div class="row"><label>التجميع<select id="g"><option value="month">الشهر</option><option value="branch">الفرع</option><option value="segment">النشاط (إيجار/ألعاب/صيانة)</option><option value="customer">العميل</option></select></label><label>من<input type="date" id="f" value="${today().slice(0, 4)}-01-01"></label><label>إلى<input type="date" id="t" value="${today()}"></label><button class="btn teal" id="go">عرض</button></div></div><div class="card" id="o"></div>`;
     let rows = []; const go = guard(async () => { rows = await api(`/reports/sales?group=${$('#g').value}&from=${$('#f').value}&to=${$('#t').value}`); const mx = Math.max(1, ...rows.map(r => +r.net)); const tn = rows.reduce((s, r) => s + +r.net, 0), tv = rows.reduce((s, r) => s + +r.vat, 0);
       $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المبيعات</b> ${$('#f').value} → ${$('#t').value}</div>` + table([{ k: 'k', t: 'البند' }, { k: 'invoices', t: 'عدد الفواتير' }, num('net'), num('vat'), { t: '', f: r => `<div style="background:var(--teal);height:10px;border-radius:5px;width:${Math.max(2, +r.net / mx * 100)}%"></div>` }], rows).replace('</tbody>', `<tr class="tot"><td colspan="2">الإجمالي</td><td class="num">${money(tn)}</td><td class="num">${money(tv)}</td><td></td></tr></tbody>`); });
-    $('#go').onclick = go; $('#g').onchange = go; $('#pr').onclick = () => print(); $('#cv').onclick = () => rows.length && csv('sales-' + $('#g').value, rows); go(); done(m);
+    $('#go').onclick = go; $('#g').onchange = go;
+    $('#pr').onclick = () => printDoc('تقرير المبيعات والتحليلات', $('#o').innerHTML, { subtitle: `من ${$('#f').value} إلى ${$('#t').value}` });
+    $('#cv').onclick = () => rows.length && csv('sales-' + $('#g').value, rows); go(); done(m);
   };
 
   // ================= المصروفات والإيرادات =================
@@ -135,12 +195,13 @@ export function installCommerce(VIEWS, X) {
     const [acc, br, list, is] = await Promise.all([api('/accounts'), api('/branches'), api('/finance/quick'), api(`/reports/income-statement?from=${today().slice(0, 4)}-01-01&to=${today()}`)]);
     const rev = is.filter(r => r.type === 'revenue').reduce((s, r) => s + +r.amount, 0), exp = is.filter(r => r.type === 'expense').reduce((s, r) => s + +r.amount, 0);
     const opt = t => acc.filter(a => a.type === t && a.is_postable).map(a => `<option value="${a.code}">${a.code} ${esc(a.name_ar)}</option>`).join('');
-    m.innerHTML = head('المصروفات والإيرادات', 'وحدة مالية واحدة: كل عملية تُرحَّل بقيد مزدوج متوازن مع ضريبة المدخلات/المخرجات') +
+    m.innerHTML = head('المصروفات والإيرادات', 'وحدة مالية واحدة: كل عملية تُرحَّل بقيد مزدوج متوازن مع ضريبة المدخلات/المخرجات', '<button class="btn" id="pr-quick">🖨️ طباعة العمليات</button>') +
       `<div class="kpis"><div class="kpi">إيرادات السنة<b class="n">${money(rev)}</b></div><div class="kpi">مصروفات السنة<b class="n">${money(exp)}</b></div><div class="kpi">الصافي<b class="n">${money(rev - exp)}</b></div></div>
        ${can('admin', 'accountant') ? `<div class="card noprint"><div class="tabs"></div><div class="row"><label>التاريخ<input type="date" id="qd" value="${today()}"></label><label>الفرع<select id="qb"><option value="">—</option>${br.map(b => `<option value="${b.code}">${esc(b.name_ar)}</option>`).join('')}</select></label>
          <label>الحساب<select id="qa"></select></label><label>المبلغ بدون ضريبة<input type="number" step="0.01" id="qm"></label><label>الضريبة<select id="qv"><option value="15">15%</option><option value="0">بدون / معفى</option></select></label>
          <label>${'الدفع/القبض'}<select id="qp"><option value="1110">1110 الصندوق</option><option value="1121">1121 البنك</option><option value="1122">1122 مدى/بطاقات</option></select></label><label style="flex:2">البيان<input id="qn"></label><button class="btn teal" id="qs">ترحيل</button></div></div>` : ''}
        <div class="card">${table([{ k: 'entry_date', t: 'التاريخ' }, { k: 'entry_no', t: 'القيد' }, { t: 'النوع', f: r => r.source_type === 'expense' ? tag('closed', 'مصروف') : tag('open', 'إيراد') }, { k: 'memo', t: 'البيان' }, { k: 'branch', t: 'الفرع' }, num('total_base')], list)}</div>`;
+    $('#pr-quick').onclick = () => printDoc('سجل المصروفات والإيرادات', table([{ k: 'entry_date', t: 'التاريخ' }, { k: 'entry_no', t: 'رقم القيد' }, { t: 'النوع', f: r => (r.source_type === 'expense' ? 'مصروف' : 'إيراد') }, { k: 'memo', t: 'البيان' }, { k: 'branch', t: 'الفرع' }, num('total_base', 'المبلغ')], list), { subtitle: 'سجل العمليات المالية المباشرة' });
     if (can('admin', 'accountant')) { let kind = 'expense'; const draw = () => { tabs(m, [['expense', 'مصروف'], ['revenue', 'إيراد آخر']], kind, k => { kind = k; draw(); }); $('#qa').innerHTML = opt(kind); }; draw();
       $('#qs').onclick = guard(async () => { await api('/finance/quick', { method: 'POST', body: { kind, date: $('#qd').value, branch: $('#qb').value || undefined, account: $('#qa').value, amount: $('#qm').value, vat_rate: +$('#qv').value, pay_account: $('#qp').value, memo: $('#qn').value } }); toast('تم الترحيل'); VIEWS.quick(m); }); } done(m);
   };
@@ -151,7 +212,7 @@ export function installCommerce(VIEWS, X) {
     const by = {}; rows.forEach(r => by[r.bucket] = (by[r.bucket] || 0) + +r.outstanding);
     m.innerHTML = head('الذمم والمدفوعات', 'أعمار الذمم المدينة (العملاء) وتحصيلها — ذمم الموردين في المشتريات ← الذمم الدائنة والمدفوعات', '<button class="btn" id="pr">طباعة</button>') + `<div class="kpis"><div class="kpi">إجمالي المستحق<b class="n">${money(tot)}</b></div>${['1-30', '31-60', '61-90', '90+'].map(b => `<div class="kpi">${b} يوم<b class="n">${money(by[b] || 0)}</b></div>`).join('')}</div>
       <div class="card">${table([{ k: 'partner', t: 'العميل' }, { k: 'invoice_no', t: 'الفاتورة' }, { k: 'due_date', t: 'الاستحقاق' }, num('outstanding'), { k: 'bucket', t: 'الفئة' }, { t: '', f: r => ed ? `<button class="btn teal sm noprint" data-pay="${r.invoice_no}" data-o="${r.outstanding}">قبض</button>` : '' }], rows)}</div>`;
-    $('#pr').onclick = () => print();
+    $('#pr').onclick = () => printDoc('أعمار الذمم المدينة للعملاء', table([{ k: 'partner', t: 'العميل' }, { k: 'invoice_no', t: 'الفاتورة' }, { k: 'due_date', t: 'الاستحقاق' }, num('outstanding', 'المتبقي'), { k: 'bucket', t: 'الفئة' }], rows), { subtitle: 'تقرير أعمار الديون والتحصيل' });
     const inv = await api('/invoices?limit=500'); m.querySelectorAll('[data-pay]').forEach(b => b.onclick = guard(async () => { const a = prompt('مبلغ القبض (المتبقي ' + b.dataset.o + '):', b.dataset.o); if (!a) return; const i = inv.find(x => x.number === b.dataset.pay);
       await api(`/invoices/${i.id}/payments`, { method: 'POST', body: { amount: a, cash_account: '1121', method: 'bank' } }); toast('تم القبض'); VIEWS.dues(m); })); done(m);
   };
@@ -161,9 +222,44 @@ export function installCommerce(VIEWS, X) {
   VIEWS.vendors = async function (m) {
     const [v, bills] = await Promise.all([api('/partners?kind=vendor'), api('/bills')]); const ed = can('admin', 'accountant', 'cashier');
     const due = id => bills.filter(b => b.vendor_id === id).reduce((a, b) => a + +b.outstanding, 0);
-    m.innerHTML = head('الموردون', 'حساب الذمم الدائنة 2120 — الرقم الضريبي 15 رقماً يبدأ وينتهي بـ 3') + `<div class="card">${table([{ k: 'name_ar', t: 'المورد' }, { k: 'vat_number', t: 'الرقم الضريبي' }, { k: 'cr_number', t: 'السجل التجاري' }, { k: 'city', t: 'المدينة' }, { k: 'phone', t: 'الجوال' }, { t: 'المستحق له', f: r => `<span class="n">${money(due(r.id))}</span>` }], v)}</div>
+    m.innerHTML = head('الموردون والذمم الدائنة', 'حساب الذمم الدائنة 2120 — الرقم الضريبي 15 رقماً يبدأ وينتهي بـ 3', '<button class="btn" id="pr-vends">🖨️ طباعة قائمة الموردين</button>') +
+      `<div id="vend-edit-box"></div>
+      <div class="card">${table([
+        { k: 'name_ar', t: 'المورد' },
+        { k: 'vat_number', t: 'الرقم الضريبي' },
+        { k: 'cr_number', t: 'السجل التجاري' },
+        { k: 'city', t: 'المدينة' },
+        { k: 'phone', t: 'الجوال' },
+        { t: 'المستحق له', f: r => `<span class="n">${money(due(r.id))}</span>` },
+        { t: '', f: r => ed ? `<span class="noprint"><button class="btn ghost sm" data-ve="${r.id}">تعديل</button></span>` : '' }
+      ], v)}</div>
       ${ed ? `<div class="card noprint"><b>مورد جديد</b><div class="row"><label style="flex:2">الاسم<input id="vn"></label><label>الرقم الضريبي<input id="vv" maxlength="15"></label><label>السجل التجاري<input id="vc"></label><label>المدينة<input id="vt"></label><label>الجوال<input id="vp"></label><button class="btn teal" id="vs">إضافة</button></div></div>` : ''}`;
-    $('#vs')?.addEventListener('click', guard(async () => { await api('/partners', { method: 'POST', body: { kind: 'vendor', name_ar: $('#vn').value, vat_number: $('#vv').value, cr_number: $('#vc').value, city: $('#vt').value, phone: $('#vp').value } }); VIEWS.vendors(m); })); done(m);
+    $('#pr-vends').onclick = () => printDoc('سجل الموردين المعتمدين', table([{ k: 'name_ar', t: 'المورد' }, { k: 'vat_number', t: 'الرقم الضريبي' }, { k: 'cr_number', t: 'السجل التجاري' }, { k: 'city', t: 'المدينة' }, { k: 'phone', t: 'الجوال' }, { t: 'المستحق له', f: r => money(due(r.id)) }], v), { subtitle: 'دليل الموردين والذمم الدائنة' });
+    if (ed) {
+      $('#vs')?.addEventListener('click', guard(async () => { await api('/partners', { method: 'POST', body: { kind: 'vendor', name_ar: $('#vn').value, vat_number: $('#vv').value, cr_number: $('#vc').value, city: $('#vt').value, phone: $('#vp').value } }); VIEWS.vendors(m); }));
+      m.querySelectorAll('[data-ve]').forEach(b => b.onclick = () => {
+        const item = v.find(x => x.id === +b.dataset.ve); if (!item) return;
+        $('#vend-edit-box').innerHTML = `<div class="card noprint"><b>تعديل بيانات المورد: ${esc(item.name_ar)}</b>
+          <div class="row">
+            <label style="flex:2">الاسم<input id="ev-n" value="${esc(item.name_ar)}"></label>
+            <label>الرقم الضريبي<input id="ev-v" maxlength="15" value="${esc(item.vat_number || '')}"></label>
+            <label>السجل التجاري<input id="ev-c" value="${esc(item.cr_number || '')}"></label>
+          </div>
+          <div class="row">
+            <label>المدينة<input id="ev-city" value="${esc(item.city || '')}"></label>
+            <label>الجوال<input id="ev-ph" value="${esc(item.phone || '')}"></label>
+            <button class="btn teal" id="ev-sv">حفظ التعديلات</button>
+            <button class="btn ghost" id="ev-cn">إلغاء</button>
+          </div></div>`;
+        $('#ev-cn').onclick = () => { $('#vend-edit-box').innerHTML = ''; };
+        $('#ev-sv').onclick = guard(async () => {
+          await api('/partners/' + item.id, { method: 'PUT', body: { name_ar: $('#ev-n').value, vat_number: $('#ev-v').value || null, cr_number: $('#ev-c').value || null, city: $('#ev-city').value || null, phone: $('#ev-ph').value || null } });
+          toast('تم تحديث بيانات المورد'); VIEWS.vendors(m);
+        });
+        $('#vend-edit-box').scrollIntoView?.({ behavior: 'smooth' });
+      });
+    }
+    done(m);
   };
   VIEWS.bills = async function (m) {
     const [bills, vendors, acc, br] = await Promise.all([api('/bills'), api('/partners?kind=vendor'), api('/accounts'), api('/branches')]); const ed = can('admin', 'accountant');
@@ -173,7 +269,7 @@ export function installCommerce(VIEWS, X) {
         { t: '', f: r => ed && +r.outstanding > 0 ? `<button class="btn teal sm noprint" data-p="${r.id}" data-o="${r.outstanding}">سداد</button>` : '' }], bills)}</div>
       ${ed ? `<div class="card noprint"><b>تسجيل فاتورة مورد</b><div class="row"><label>المورد<select id="bv">${vendors.map(v => `<option value="${v.id}">${esc(v.name_ar)}</option>`).join('')}</select></label><label>رقم فاتورة المورد<input id="br"></label><label>التاريخ<input type="date" id="bd" value="${today()}"></label><label>الاستحقاق<input type="date" id="bu" value="${today()}"></label></div>
         <div class="row"><label>الحساب<select id="ba">${aopt}</select></label><label>المبلغ بدون ضريبة<input type="number" step="0.01" id="bn"></label><label>الضريبة<select id="bt"><option value="15">15%</option><option value="0">بدون / معفى</option></select></label><label>الفرع<select id="bb"><option value="">—</option>${br.map(b => `<option value="${b.code}">${esc(b.name_ar)}</option>`).join('')}</select></label><label style="flex:2">البيان<input id="bm"></label><button class="btn teal" id="bs">ترحيل</button></div></div>` : ''}`;
-    $('#pr').onclick = () => print();
+    $('#pr').onclick = () => printDoc('سجل فواتير المشتريات والموردين', table([{ k: 'number', t: 'الرقم' }, { k: 'supplier_ref', t: 'فاتورة المورد' }, { k: 'vendor', t: 'المورد' }, { k: 'bill_date', t: 'التاريخ' }, num('net', 'المبلغ'), num('vat', 'الضريبة'), num('total', 'الإجمالي'), num('outstanding', 'المتبقي')], bills), { subtitle: 'سجل المشتريات وضريبة المدخلات' });
     $('#bs')?.addEventListener('click', guard(async () => { await api('/bills', { method: 'POST', body: { vendor_id: $('#bv').value, supplier_ref: $('#br').value, bill_date: $('#bd').value, due_date: $('#bu').value, account: $('#ba').value, net: $('#bn').value, vat_rate: +$('#bt').value, branch: $('#bb').value || undefined, memo: $('#bm').value } }); toast('رُحّلت الفاتورة'); VIEWS.bills(m); }));
     m.querySelectorAll('[data-p]').forEach(b => b.onclick = guard(async () => { const a = prompt('مبلغ السداد (المتبقي ' + b.dataset.o + '):', b.dataset.o); if (!a) return; await api(`/bills/${b.dataset.p}/payments`, { method: 'POST', body: { amount: a, cash_account: '1121', method: 'bank' } }); toast('تم السداد'); VIEWS.bills(m); })); done(m);
   };
@@ -181,7 +277,7 @@ export function installCommerce(VIEWS, X) {
     const [rows, bills] = await Promise.all([api('/reports/ap-aging?to=' + today()), api('/bills')]); const ed = can('admin', 'accountant'); const tot = rows.reduce((s, r) => s + +r.outstanding, 0); const by = {}; rows.forEach(r => by[r.bucket] = (by[r.bucket] || 0) + +r.outstanding);
     m.innerHTML = head('الذمم الدائنة والمدفوعات', 'أعمار المستحقات للموردين وسدادها — ذمم العملاء في المالية ← الذمم والمدفوعات', '<button class="btn" id="pr">طباعة</button>') + `<div class="kpis"><div class="kpi">إجمالي المستحق للموردين<b class="n">${money(tot)}</b></div>${['غير مستحق', '1-30', '31-60', '61-90'].map(b => `<div class="kpi">${b}<b class="n">${money(by[b] || 0)}</b></div>`).join('')}</div>
       <div class="card">${table([{ k: 'vendor', t: 'المورد' }, { k: 'bill_no', t: 'الفاتورة' }, { k: 'supplier_ref', t: 'مرجع المورد' }, { k: 'due_date', t: 'الاستحقاق' }, num('outstanding'), { k: 'bucket', t: 'الفئة' }, { t: '', f: r => ed ? `<button class="btn teal sm noprint" data-n="${r.bill_no}" data-o="${r.outstanding}">سداد</button>` : '' }], rows)}</div>`;
-    $('#pr').onclick = () => print();
+    $('#pr').onclick = () => printDoc('أعمار الذمم الدائنة للموردين', table([{ k: 'vendor', t: 'المورد' }, { k: 'bill_no', t: 'الفاتورة' }, { k: 'supplier_ref', t: 'مرجع المورد' }, { k: 'due_date', t: 'الاستحقاق' }, num('outstanding', 'المستحق'), { k: 'bucket', t: 'الفئة' }], rows), { subtitle: 'جدول أعمار الذمم الدائنة' });
     m.querySelectorAll('[data-n]').forEach(b => b.onclick = guard(async () => { const a = prompt('مبلغ السداد (المتبقي ' + b.dataset.o + '):', b.dataset.o); if (!a) return; const bill = bills.find(x => x.number === b.dataset.n); await api(`/bills/${bill.id}/payments`, { method: 'POST', body: { amount: a, cash_account: '1121', method: 'bank' } }); toast('تم السداد'); VIEWS.apay(m); })); done(m);
   };
   VIEWS.purchrep = async function (m) {
@@ -189,7 +285,9 @@ export function installCommerce(VIEWS, X) {
       `<div class="card noprint"><div class="row"><label>التجميع<select id="g"><option value="month">الشهر</option><option value="vendor">المورد</option><option value="branch">الفرع</option><option value="account">نوع المشتريات (الحساب)</option></select></label><label>من<input type="date" id="f" value="${today().slice(0, 4)}-01-01"></label><label>إلى<input type="date" id="t" value="${today()}"></label><button class="btn teal" id="go">عرض</button></div></div><div class="card" id="o"></div>`;
     let rows = []; const go = guard(async () => { rows = await api(`/reports/purchases?group=${$('#g').value}&from=${$('#f').value}&to=${$('#t').value}`); const sum = k => rows.reduce((s, r) => s + +r[k], 0);
       $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المشتريات</b> ${$('#f').value} → ${$('#t').value}</div>` + table([{ k: 'k', t: 'البند' }, { k: 'bills', t: 'عدد الفواتير' }, num('net'), num('vat'), num('total')], rows).replace('</tbody>', `<tr class="tot"><td colspan="2">الإجمالي</td><td class="num">${money(sum('net'))}</td><td class="num">${money(sum('vat'))}</td><td class="num">${money(sum('total'))}</td></tr></tbody>`); });
-    $('#go').onclick = go; $('#g').onchange = go; $('#pr').onclick = () => print(); $('#cv').onclick = () => rows.length && csv('purchases-' + $('#g').value, rows); go(); done(m);
+    $('#go').onclick = go; $('#g').onchange = go;
+    $('#pr').onclick = () => printDoc('تقرير المشتريات والمدخلات', $('#o').innerHTML, { subtitle: `من ${$('#f').value} إلى ${$('#t').value}` });
+    $('#cv').onclick = () => rows.length && csv('purchases-' + $('#g').value, rows); go(); done(m);
   };
 
 
@@ -317,7 +415,7 @@ export function installCommerce(VIEWS, X) {
     const [rows, moves] = await Promise.all([api('/stock?store_id=' + sid), api('/stock/moves?store_id=' + sid)]);
     const KIND = { opening: 'رصيد افتتاحي', receipt: 'استلام', sale: 'بيع', sale_return: 'مرتجع', adjustment: 'تسوية جرد' };
     const out = rows.filter(r => +r.available <= 0).length, low = rows.filter(r => +r.available > 0 && +r.available <= 5).length;
-    m.innerHTML = head('أرصدة المخزون', 'الكميات من حركات غير قابلة للتعديل. المتاح = الرصيد − المحجوز لطلبات المتجر (المسلَّمة غير المفوترة تبقى محجوزة). لا يُسمح بالبيع بالسالب.') +
+    m.innerHTML = head('أرصدة المخزون', 'الكميات من حركات غير قابلة للتعديل. المتاح = الرصيد − المحجوز لطلبات المتجر (المسلَّمة غير المفوترة تبقى محجوزة). لا يُسمح بالبيع بالسالب.', '<button class="btn" id="pr-stock">🖨️ طباعة أرصدة المخزون</button>') +
       (stores.length > 1 ? `<div class="card noprint"><label>المتجر<select id="ss">${stores.map(x => `<option value="${x.id}" ${x.id === sid ? 'selected' : ''}>${esc(x.name_ar)}</option>`).join('')}</select></label></div>` : '') +
       `<div class="kpis"><div class="kpi">أصناف متتبَّعة<b class="n">${rows.length}</b></div><div class="kpi">نفد المتاح<b class="n">${out}</b></div><div class="kpi">منخفض (5 أو أقل)<b class="n">${low}</b></div></div>
       <div class="card">${rows.length ? table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { t: 'الرصيد', f: r => `<b class="n">${+r.on_hand}</b>` }, { t: 'محجوز', f: r => `<span class="n">${+r.reserved}</span>` }, { t: 'المتاح', f: r => +r.available <= 0 ? tag('locked', 'نفد') : +r.available <= 5 ? tag('closed', +r.available) : tag('open', +r.available) }], rows)
@@ -325,6 +423,7 @@ export function installCommerce(VIEWS, X) {
       ${ed && rows.length ? `<div class="card noprint"><b>تسجيل استلام بضاعة</b><div class="row"><label style="flex:2">المنتج<select id="rp">${rows.map(r => `<option value="${r.id}">${esc(r.sku)} — ${esc(r.name_ar)}</option>`).join('')}</select></label><label>الكمية<input id="rq" type="number" min="1" step="1"></label><label>المرجع (فاتورة المورد)<input id="rr"></label><label>ملاحظة<input id="rn"></label><button class="btn teal" id="rs">تسجيل الاستلام</button></div></div>` : ''}
       <div class="card"><b>آخر الحركات</b>${table([{ t: 'التاريخ', f: r => `<span class="n">${esc(String(r.created_at).slice(0, 16).replace('T', ' '))}</span>` }, { k: 'sku', t: 'الرمز' }, { k: 'product', t: 'المنتج' }, { t: 'النوع', f: r => KIND[r.kind] || r.kind }, { t: 'الكمية', f: r => `<span class="n" style="color:${+r.qty < 0 ? '#b91c1c' : '#166534'}">${+r.qty}</span>` }, { k: 'ref', t: 'المرجع' }, { k: 'created_by', t: 'بواسطة' }], moves)}</div>
       <div class="sub">لم تُنفَّذ بعد: تقييم المخزون (FIFO/متوسط) وتكلفة البضاعة المباعة 5100 وأوامر الشراء والاستلام الجزئي.</div>`;
+    $('#pr-stock').onclick = () => printDoc('تقرير أرصدة المخزون والمتاح', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { k: 'on_hand', t: 'الرصيد الدفتري' }, { k: 'reserved', t: 'المحجوز' }, { k: 'available', t: 'المتاح' }], rows), { subtitle: 'تقرير أرصدة المخزون المتاحة بالمستودع' });
     $('#ss')?.addEventListener('change', e => VIEWS.stock(m, e.target.value));
     $('#rs')?.addEventListener('click', guard(async () => { const q = $('#rq').value; if (!(Number(q) > 0)) return toast('أدخل كمية موجبة', false); await api('/stock/receive', { method: 'POST', body: { product_id: $('#rp').value, store_id: sid, qty: q, ref: $('#rr').value, note: $('#rn').value } }); toast('تم تسجيل الاستلام'); VIEWS.stock(m, sid); })); done(m);
   };
@@ -332,10 +431,11 @@ export function installCommerce(VIEWS, X) {
     const stores = (await api('/stores')).filter(x => x.is_active); const ed = can('admin', 'accountant');
     if (!stores.length) { m.innerHTML = head('الجرد والاستلام') + '<div class="card">لا يوجد متجر نشط.</div>'; return done(m); }
     sid = stores.some(x => x.id === +sid) ? +sid : stores[0].id; const rows = await api('/stock?store_id=' + sid);
-    m.innerHTML = head('الجرد والاستلام', 'أدخل الكمية المعدودة فعلياً؛ الفرق يُسجَّل كحركة «تسوية جرد» ولا يُعدَّل الرصيد مباشرة. الاستلام من «أرصدة المخزون».') +
+    m.innerHTML = head('الجرد والاستلام', 'أدخل الكمية المعدودة فعلياً؛ الفرق يُسجَّل كحركة «تسوية جرد» ولا يُعدَّل الرصيد مباشرة. الاستلام من «أرصدة المخزون».', '<button class="btn" id="pr-count">🖨️ طباعة مسير الجرد</button>') +
       (stores.length > 1 ? `<div class="card noprint"><label>المتجر<select id="cs0">${stores.map(x => `<option value="${x.id}" ${x.id === sid ? 'selected' : ''}>${esc(x.name_ar)}</option>`).join('')}</select></label></div>` : '') +
       `<div class="card">${rows.length ? table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { t: 'الرصيد الدفتري', f: r => `<span class="n">${+r.on_hand}</span>` }, { t: 'المعدود فعلياً', f: r => ed ? `<input type="number" min="0" step="1" data-c="${r.id}" data-h="${+r.on_hand}" style="width:110px">` : '' }, { t: 'الفرق', f: r => `<b class="n" id="df${r.id}"></b>` }], rows) : '<div class="geo-note">لا توجد منتجات تتبع المخزون.</div>'}</div>
       ${ed && rows.length ? '<div class="card noprint"><label>ملاحظة الجرد<input id="cn" value="جرد دوري"></label><br><button class="btn amber" id="cs">اعتماد الجرد وتسوية الفروقات</button></div>' : ''}`;
+    $('#pr-count').onclick = () => printDoc('مسير الجرد الفعلي للمخزون', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'on_hand', t: 'الرصيد الدفتري' }, { t: 'العد الفعلي', f: () => '..............' }, { t: 'فروقات الجرد', f: () => '..............' }], rows), { subtitle: 'نموذج مطابقة الجرد الدوري الفعلي للمستودع', signatures: [{ title: 'مسؤول المستودع' }, { title: 'لجنة الجرد' }, { title: 'المدير المالي' }] });
     $('#cs0')?.addEventListener('change', e => VIEWS.count(m, e.target.value));
     m.querySelectorAll('[data-c]').forEach(i => i.oninput = () => { const d = i.value === '' ? '' : Number(i.value) - Number(i.dataset.h); const el = $('#df' + i.dataset.c); el.textContent = d === '' ? '' : (d > 0 ? '+' : '') + d; el.style.color = d < 0 ? '#b91c1c' : '#166534'; });
     $('#cs')?.addEventListener('click', guard(async () => { const counts = [...m.querySelectorAll('[data-c]')].filter(i => i.value !== '').map(i => ({ product_id: +i.dataset.c, counted: i.value })); if (!counts.length) return toast('أدخل كمية واحدة على الأقل', false);
@@ -348,7 +448,8 @@ export function installCommerce(VIEWS, X) {
   VIEWS.bookings = async function (m, tab = 'list') {
     const [list, techs, geo] = await Promise.all([api('/bookings'), api('/technicians'), api('/geo')]); const cs = can('admin', 'accountant', 'cashier'), ed = can('admin', 'accountant');
     const cnt = st => st === 'all' ? list.length : list.filter(x => x.status === st).length;
-    m.innerHTML = head('الحجوزات', 'تُنشأ من المتجر الإلكتروني (منطقة ← مدينة ← حي)، ثم تُسنَد لفني وتُكتمل وتُفوتَر.') + '<div class="tabs"></div><div id="tb"></div><div id="dt"></div>';
+    m.innerHTML = head('الحجوزات', 'تُنشأ من المتجر الإلكتروني (منطقة ← مدينة ← حي)، ثم تُسنَد لفني وتُكتمل وتُفوتَر.', '<button class="btn" id="pr-bk-list">🖨️ طباعة قائمة الحجوزات</button>') + '<div class="tabs"></div><div id="tb"></div><div id="dt"></div>';
+    $('#pr-bk-list').onclick = () => printDoc('سجل الحجوزات ومواعيد الخدمة', table([{ k: 'number', t: 'الحجز' }, { t: 'الموعد', f: r => String(r.scheduled_at).slice(0, 16).replace('T', ' ') }, { k: 'customer_name', t: 'العميل' }, { k: 'phone', t: 'الجوال' }, { t: 'الموقع', f: r => `${r.region || ''} › ${r.city || ''} › ${r.district || ''}` }, { k: 'technician', t: 'الفني' }, num('total', 'الإجمالي'), { t: 'الحالة', f: r => (BK[r.status] ? BK[r.status][1] : r.status) }, { k: 'invoice_no', t: 'الفاتورة' }], list), { subtitle: 'سجل مواعيد الزيارات والخدمات الميدانية' });
     const cityOpts = (rid, sel) => geo.cities.filter(c => !rid || c.region_id === +rid).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name_ar)}</option>`).join('');
     const regOpts = sel => geo.regions.map(r => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${esc(r.name_ar)}</option>`).join('');
     const techForm = t => { const city = geo.cities.find(c => c.id === t?.city_id); const rid = city?.region_id || geo.regions[0].id;
@@ -373,7 +474,7 @@ export function installCommerce(VIEWS, X) {
       m.querySelectorAll('[data-k]').forEach(b => b.onclick = () => open_(+b.dataset.k)); };
     const open_ = guard(async id => { const k = await api('/bookings/' + id); const reload = () => VIEWS.bookings(m, 'list');
       const locked = !!k.invoice_id ? 'disabled' : '';
-      $('#dt').innerHTML = `<div class="card"><b>${esc(k.number)}</b> ${tag(...BK[k.status])} <span class="sub">${esc(String(k.scheduled_at).slice(0, 16))} · ${k.duration_minutes} دقيقة</span>
+      $('#dt').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><div><b>${esc(k.number)}</b> ${tag(...BK[k.status])} <span class="sub">${esc(String(k.scheduled_at).slice(0, 16))} · ${k.duration_minutes} دقيقة</span></div><button class="btn sm noprint" id="pr-bk-order">🖨️ طباعة أمر العمل / تذكرة الحجز</button></div>
         <div class="grid2"><div><p><b>العميل:</b> ${esc(k.customer_name)} <span class="n">${esc(k.phone)}</span><br><b>العنوان:</b> ${esc(k.region)} › ${esc(k.city)} › ${esc(k.district)}<br>${esc(k.street || '')} ${esc(k.building_no || '')} ${esc(k.postal_code || '')} ${esc(k.address_notes || '')}<br><b>ملاحظات:</b> ${esc(k.notes || '—')}</p>
           ${table([{ k: 'description', t: 'الخدمة' }, { k: 'qty', t: 'كمية' }, num('net'), num('vat')], k.lines)}<h4 class="n">الإجمالي: ${money(k.total)} ر.س</h4></div>
         <div class="noprint">${['new', 'confirmed'].includes(k.status) && cs ? `<b>الفني والموعد</b><div class="row"><label>التاريخ<input type="date" id="ad" value="${String(k.scheduled_at).slice(0, 10)}"></label><label>الوقت<input type="time" id="ah" step="1800" value="${String(k.scheduled_at).slice(11, 16)}"></label><label>المدة (دقيقة)<input type="number" id="am" value="${k.duration_minutes}" step="30" min="30"></label></div><div class="row"><label style="flex:3">الفني (نفس المدينة أولاً، والمشغول معطّل)<select id="at"></select></label></div><button class="btn teal sm" id="as">${k.technician_id ? 'تحديث الإسناد' : 'إسناد وتأكيد'}</button>` : k.technician ? `<b>الفني:</b> ${esc(k.technician)}` : ''}
@@ -382,6 +483,29 @@ export function installCommerce(VIEWS, X) {
           <div class="row"><label>اسم المشتري<input id="bn" value="${esc(k.buyer_name || '')}" ${locked}></label><label>الرقم الضريبي<input id="bv" maxlength="15" value="${esc(k.buyer_vat || '')}" ${locked}></label><label>السجل التجاري<input id="bc" value="${esc(k.buyer_cr || '')}" ${locked}></label></div>
           <div class="row"><label>رقم المبنى<input id="bb" value="${esc(k.bill_building_no || '')}" ${locked}></label><label>الشارع<input id="bs" value="${esc(k.bill_street || '')}" ${locked}></label><label>الحي<input id="bd" value="${esc(k.bill_district || '')}" ${locked}></label><label>المدينة<input id="bi" value="${esc(k.bill_city || '')}" ${locked}></label><label>الرمز البريدي<input id="bp" value="${esc(k.bill_postal_code || '')}" ${locked}></label></div>
           ${k.invoice_id ? '<span class="tag t-open">تمت الفوترة</span>' : (ed ? '<button class="btn ghost sm" id="bsv">حفظ البيانات</button> <button class="btn amber" id="bin">إصدار الفاتورة</button>' : '')}` : ''}</div>`;
+      $('#pr-bk-order').onclick = () => {
+        const bMeta = `
+          <div class="p-meta-item"><span class="p-meta-label">رقم الحجز:</span><span class="p-meta-val">${esc(k.number)}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">حالة الحجز:</span><span class="p-meta-val">${esc(BK[k.status]?.[1] || k.status)}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">العميل:</span><span class="p-meta-val">${esc(k.customer_name)} (${esc(k.phone)})</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">الموعد المحدد:</span><span class="p-meta-val">${esc(String(k.scheduled_at).slice(0, 16).replace('T', ' '))} (${k.duration_minutes} دقيقة)</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">العنوان:</span><span class="p-meta-val">${esc(k.region || '')} › ${esc(k.city || '')} › ${esc(k.district || '')} ${esc(k.street || '')}</span></div>
+          <div class="p-meta-item"><span class="p-meta-label">الفني المكلف:</span><span class="p-meta-val">${esc(k.technician || 'لم يُسنَد بعد')}</span></div>
+          ${k.notes ? `<div class="p-meta-item"><span class="p-meta-label">ملاحظات:</span><span class="p-meta-val">${esc(k.notes)}</span></div>` : ''}
+        `;
+        const bTable = table([{ k: 'description', t: 'الخدمة / البند' }, { k: 'qty', t: 'الكمية' }, num('net', 'المبلغ'), num('vat', 'الضريبة')], k.lines) +
+          `<div class="p-total-box"><b>الإجمالي المستحق:</b> ${money(k.total)} ر.س</div>`;
+        printDoc(`أمر خدمة وزيارة ميدانية (${k.number})`, bTable, {
+          ref: k.number,
+          meta: bMeta,
+          subtitle: 'أمر تنفيذ خدمة وزيارة فنية ميدانية',
+          signatures: [
+            { title: 'مسؤول الحجوزات والتنسيق' },
+            { title: 'الفني المنفذ' },
+            { title: 'استلام ورضا العميل' }
+          ]
+        });
+      };
       const loadTechs = guard(async () => { const sel = $('#at'); if (!sel) return; const keep = sel.value || String(k.technician_id || '');
         const list = await api(`/bookings/${id}/technicians?date=${$('#ad').value}&time=${$('#ah').value}&duration=${$('#am').value}`);
         sel.innerHTML = list.map(t => `<option value="${t.id}" ${t.busy ? 'disabled' : ''} ${String(t.id) === keep ? 'selected' : ''}>${esc(t.name_ar)} — ${esc(t.city || 'بدون مدينة')}${t.same_city ? ' ✓ نفس مدينة الحجز' : ''}${t.busy ? ' ⚠ مشغول في هذا الموعد' : ''}</option>`).join('') || '<option value="">لا يوجد فني نشط — أضف فنياً من تبويب الفنيين</option>'; });

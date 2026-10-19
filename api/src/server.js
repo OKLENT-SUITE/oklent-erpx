@@ -93,6 +93,20 @@ route('POST', '/api/accounts', 'accountant', async req => {
     `INSERT INTO accounts(code,name_ar,name_en,type,parent_id,is_postable) VALUES ($1,$2,$3,$4,(SELECT id FROM accounts WHERE code=$5),coalesce($6,true)) RETURNING *`,
     [b.code, b.name_ar, b.name_en, b.type, b.parent_code, b.is_postable])).rows[0]);
 });
+route('PUT', '/api/accounts/:code', 'accountant', async req => {
+  const b = req.body || {};
+  return tx(req.user.username, async c => {
+    const { rows: [acc] } = await c.query(`
+      UPDATE accounts SET
+        name_ar = coalesce($1, name_ar),
+        name_en = coalesce($2, name_en),
+        is_active = coalesce($3, is_active)
+      WHERE code = $4 RETURNING *
+    `, [b.name_ar, b.name_en, b.is_active, req.params.code]);
+    if (!acc) throw httpErr(404, 'account not found');
+    return acc;
+  });
+});
 route('GET', '/api/branches', 'viewer', async () => (await q('SELECT * FROM branches ORDER BY id')).rows);
 route('GET', '/api/currencies', 'viewer', async () => ({
   currencies: (await q('SELECT * FROM currencies ORDER BY is_base DESC, code')).rows,
@@ -107,6 +121,34 @@ route('POST', '/api/partners', 'cashier', async req => {
     `INSERT INTO partners(kind,name_ar,name_en,vat_number,cr_number,national_id,phone,email,building_no,street,district,city,postal_code)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
     [b.kind, b.name_ar, b.name_en, b.vat_number || null, b.cr_number, b.national_id, b.phone, b.email, b.building_no, b.street, b.district, b.city, b.postal_code])).rows[0]);
+});
+route('PUT', '/api/partners/:id', 'cashier', async req => {
+  const b = req.body || {};
+  return tx(req.user.username, async c => {
+    const { rows: [p] } = await c.query(`
+      UPDATE partners SET
+        name_ar = coalesce($1, name_ar),
+        name_en = coalesce($2, name_en),
+        vat_number = coalesce($3, vat_number),
+        cr_number = coalesce($4, cr_number),
+        national_id = coalesce($5, national_id),
+        phone = coalesce($6, phone),
+        email = coalesce($7, email),
+        building_no = coalesce($8, building_no),
+        street = coalesce($9, street),
+        district = coalesce($10, district),
+        city = coalesce($11, city),
+        postal_code = coalesce($12, postal_code),
+        is_active = coalesce($13, is_active)
+      WHERE id = $14 RETURNING *
+    `, [
+      b.name_ar, b.name_en, b.vat_number, b.cr_number, b.national_id,
+      b.phone, b.email, b.building_no, b.street, b.district, b.city,
+      b.postal_code, b.is_active, req.params.id
+    ]);
+    if (!p) throw httpErr(404, 'partner not found');
+    return p;
+  });
 });
 
 // ---- journal ----
@@ -169,6 +211,12 @@ route('GET', '/api/units', 'viewer', async () => (await q(`SELECT u.*, ut.name_a
   FROM units u JOIN unit_types ut ON ut.code=u.unit_type JOIN properties p ON p.id=u.property_id ORDER BY p.id,u.unit_no`)).rows);
 route('POST', '/api/units', 'accountant', async req => { const b = req.body; return tx(req.user.username, async c => (await c.query(
   'INSERT INTO units(property_id,unit_no,unit_type,area_m2,base_annual_rent) VALUES ($1,$2,$3,$4,$5) RETURNING *', [b.property_id, b.unit_no, b.unit_type, b.area_m2, b.base_annual_rent])).rows[0]); });
+route('PUT', '/api/properties/:id', 'accountant', async req => { const b = req.body || {}; return tx(req.user.username, async c => (await c.query(
+  `UPDATE properties SET name_ar=coalesce($1,name_ar), name_en=coalesce($2,name_en), kind=coalesce($3,kind), city=coalesce($4,city), deed_no=coalesce($5,deed_no) WHERE id=$6 RETURNING *`,
+  [b.name_ar, b.name_en, b.kind, b.city, b.deed_no, req.params.id])).rows[0]); });
+route('PUT', '/api/units/:id', 'accountant', async req => { const b = req.body || {}; return tx(req.user.username, async c => (await c.query(
+  `UPDATE units SET unit_no=coalesce($1,unit_no), unit_type=coalesce($2,unit_type), area_m2=coalesce($3,area_m2), base_annual_rent=coalesce($4,base_annual_rent) WHERE id=$5 RETURNING *`,
+  [b.unit_no, b.unit_type, b.area_m2, b.base_annual_rent, req.params.id])).rows[0]); });
 route('GET', '/api/leases', 'viewer', async () => (await q(`SELECT l.*, u.unit_no, p.name_ar property, t.name_ar tenant,
   (SELECT count(*) FROM rent_schedule r WHERE r.lease_id=l.id) installments, (SELECT count(*) FROM rent_schedule r WHERE r.lease_id=l.id AND r.invoice_id IS NOT NULL) billed
   FROM leases l JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=u.property_id JOIN partners t ON t.id=l.tenant_id ORDER BY l.id DESC`)).rows);

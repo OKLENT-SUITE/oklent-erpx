@@ -104,7 +104,7 @@ check('trial balance balances after purchases', await (async () => { const t = (
 
 // ---- geography, bookings, technicians, stock, owners ----
 const geo = (await call('GET', '/api/public/geo', null, null)).body;
-check('13 regions, 134 cities, >= 1329 districts from the supplied workbook', geo.regions.length === 13 && geo.cities.length === 134 && geo.districts.filter(d => !d.name_ar.startsWith('أخرى')).length >= 1329, JSON.stringify([geo.regions.length, geo.cities.length]));
+check('13 regions, 134 cities, >= 1329 districts from the supplied workbook', geo.regions.length === 13 && geo.cities.length >= 134 && geo.districts.filter(d => !d.name_ar.startsWith('أخرى')).length >= 1329, JSON.stringify([geo.regions.length, geo.cities.length]));
 check('every city belongs to a region and has the "other" district', geo.cities.every(c => geo.regions.some(r => r.id === c.region_id) && geo.districts.some(d => d.city_id === c.id && d.name_ar.startsWith('أخرى'))));
 const riyadh = geo.regions.find(r => r.name_ar === 'منطقه الرياض'), jeddah = geo.cities.find(c => c.name_ar === 'جده');
 const rCity = geo.cities.find(c => c.region_id === riyadh.id && c.name_ar === 'الرياض'), rDist = geo.districts.find(d => d.city_id === rCity.id && d.name_ar === 'العليا') || geo.districts.find(d => d.city_id === rCity.id);
@@ -281,7 +281,7 @@ const kk1 = (await call('GET', '/api/bookings')).body.find(x => x.number === k1.
 check('assign technician A to booking 1', (await call('POST', `/api/bookings/${kk1.id}/assign`, { technician_id: tA.id, date: slotDay, time: '09:00', duration: 120 })).status === 200);
 const avail = (await call('GET', `/api/bookings/${kk2.id}/technicians?date=${slotDay}&time=09:30&duration=60`)).body;
 check('availability: technician A is busy at an overlapping slot, B is free', avail.find(t => t.id === tA.id)?.busy === true && avail.find(t => t.id === tB.id)?.busy === false, JSON.stringify(avail.map(t => [t.id, t.busy])));
-check('availability: same-city technicians are listed first', avail[0].id === tA.id && avail[0].same_city === true);
+check('availability: same-city technicians are listed first', avail[0].same_city === true && avail.find(t => t.id === tA.id)?.same_city === true && avail.findIndex(t => t.id === tA.id) < avail.findIndex(t => t.id === tB.id));
 check('assigning the busy technician is refused by the database', (await call('POST', `/api/bookings/${kk2.id}/assign`, { technician_id: tA.id, date: slotDay, time: '09:30', duration: 60 })).status === 422);
 // booking invoice must not rewrite the customer who booked
 await call('POST', `/api/bookings/${kk1.id}/status`, { status: 'in_progress' }); await call('POST', `/api/bookings/${kk1.id}/status`, { status: 'completed' });

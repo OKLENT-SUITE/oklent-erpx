@@ -410,6 +410,31 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
     });
   });
 
+  route('PUT', '/api/custodies/:id', 'accountant', async req => {
+    const b = req.body || {};
+    return tx(req.user.username, async client => {
+      const { rows: [cus] } = await client.query('SELECT * FROM custodies WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (!cus) throw httpErr(404, 'custody not found');
+      if (cus.status !== 'draft') throw httpErr(422, 'can only edit draft custodies');
+
+      const amt = b.amount !== undefined ? Number(b.amount) : Number(cus.amount);
+      const branchId = b.branch_id ? Number(b.branch_id) : (b.branch ? (await client.query('SELECT id FROM branches WHERE code=$1', [b.branch])).rows[0]?.id : cus.branch_id);
+      const { rows: [updated] } = await client.query(`
+        UPDATE custodies SET
+          employee_id = coalesce($1, employee_id),
+          custody_type = coalesce($2, custody_type),
+          amount = $3,
+          balance = $3,
+          purpose = coalesce($4, purpose),
+          notes = coalesce($5, notes),
+          branch_id = $6,
+          disbursement_date = coalesce($7, disbursement_date)
+        WHERE id = $8 RETURNING *
+      `, [b.employee_id ? Number(b.employee_id) : null, b.custody_type, amt, b.purpose, b.notes, branchId, b.disbursement_date, cus.id]);
+      return updated;
+    });
+  });
+
   route('POST', '/api/custodies/:id/disburse', 'accountant', async req => {
     const b = req.body || {};
     const payAccount = b.pay_account || b.disburse_account || '1110';
@@ -546,6 +571,47 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
     ]);
 
     return claim;
+  });
+
+  route('PUT', '/api/expense-claims/:id', 'cashier', async req => {
+    const b = req.body || {};
+    return tx(req.user.username, async client => {
+      const { rows: [claim] } = await client.query('SELECT * FROM expense_claims WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (!claim) throw httpErr(404, 'expense claim not found');
+      if (!['draft', 'submitted'].includes(claim.status)) throw httpErr(422, 'can only edit draft or submitted claims');
+
+      const net = b.net_amount !== undefined ? Number(b.net_amount) : (b.amount !== undefined ? Number(b.amount) : Number(claim.net_amount));
+      const vatRate = [0, 5, 15].includes(Number(b.vat_rate)) ? Number(b.vat_rate) : Number(claim.vat_rate);
+      const vatAmt = Number((net * (vatRate / 100)).toFixed(2));
+      const total = Number((net + vatAmt).toFixed(2));
+      const purpose = (b.purpose || b.description || claim.purpose).trim();
+      const branchId = b.branch_id ? Number(b.branch_id) : (b.branch ? (await client.query('SELECT id FROM branches WHERE code=$1', [b.branch])).rows[0]?.id : claim.branch_id);
+
+      const { rows: [updated] } = await client.query(`
+        UPDATE expense_claims SET
+          employee_id = coalesce($1, employee_id),
+          partner_id = coalesce($2, partner_id),
+          category = coalesce($3, category),
+          expense_date = coalesce($4, expense_date),
+          branch_id = $5,
+          cost_center = coalesce($6, cost_center),
+          expense_account = coalesce($7, expense_account),
+          net_amount = $8,
+          vat_rate = $9,
+          vat_amount = $10,
+          total_amount = $11,
+          payment_method = coalesce($12, payment_method),
+          pay_account = coalesce($13, pay_account),
+          purpose = $14
+        WHERE id = $15 RETURNING *
+      `, [
+        b.employee_id ? Number(b.employee_id) : null, b.partner_id ? Number(b.partner_id) : null,
+        b.category, b.expense_date, branchId, b.cost_center, b.expense_account,
+        net, vatRate, vatAmt, total, b.payment_method, b.pay_account || b.payment_account || null,
+        purpose, claim.id
+      ]);
+      return updated;
+    });
   });
 
   route('POST', '/api/expense-claims/:id/approve', 'accountant', async req => {
