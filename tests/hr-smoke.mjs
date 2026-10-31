@@ -74,7 +74,7 @@ const empId = createEmp.body.id;
 // Viewer gets employee list -> privacy redaction test (basic_salary and iban must be null)
 const viewerEmpList = await call('GET', '/api/employees', null, viewerToken);
 const viewedEmp = viewerEmpList.body.find(e => e.id === empId);
-check('Viewer role: salary and IBAN are REDACTED (null)', viewedEmp && viewedEmp.basic_salary === null && viewedEmp.iban === null);
+check('Viewer role: salary and IBAN are ABSENT from the JSON (allowlist, SEC-01)', viewedEmp && !('basic_salary' in viewedEmp) && !('iban' in viewedEmp) && !('national_id' in viewedEmp));
 
 // Admin gets employee list -> full details returned
 const adminEmpList = await call('GET', '/api/employees', null, adminToken);

@@ -1,0 +1,28 @@
+# QA-01 / REL-01: every push and pull request runs the same single command as a developer (api: npm run test:all) on a real PostgreSQL, plus the supply-chain gates.
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+permissions: { contents: read }
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16.10
+        env: { POSTGRES_USER: erpx_owner, POSTGRES_PASSWORD: ci_owner_pw, POSTGRES_DB: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U erpx_owner" --health-interval 5s --health-retries 20
+    env: { PGHOST: localhost, PGPORT: "5432", PGUSER: erpx_owner, PGPASSWORD: ci_owner_pw, REQUIRE_ALL: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.22, cache: npm, cache-dependency-path: api/package-lock.json }
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client-16 nginx-light openssl || sudo apt-get install -y postgresql-client nginx-light openssl
+      - run: cd api && npm ci
+      - run: cd api && npm audit --omit=dev --audit-level=high          # fails the build on any high/critical production advisory
+      - run: cd api && npm sbom --omit=dev --sbom-format cyclonedx > ../sbom.cdx.json
+      - run: sudo -E env "PATH=$PATH" bash -c 'RUN_NGINX_TESTS=1 bash scripts/test-all.sh'
+      - run: docker compose config -q && docker compose -f docker-compose.prod.yml config -q 2>&1 | grep -v "required variable" || true
+      - run: docker build -t oklent-business:ci .
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: test-report-and-sbom, path: "reports/\nsbom.cdx.json" }

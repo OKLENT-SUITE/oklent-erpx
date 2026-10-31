@@ -53,6 +53,7 @@ export function buildUbl({ company, inv, partner, lines, issueAt }) {
     <cbc:PayableAmount currencyID="SAR">${inv.total}</cbc:PayableAmount></cac:LegalMonetaryTotal>
 ${lines.map((l, i) => `  <cac:InvoiceLine><cbc:ID>${i + 1}</cbc:ID><cbc:InvoicedQuantity unitCode="PCE">${l.qty}</cbc:InvoicedQuantity>
     <cbc:LineExtensionAmount currencyID="SAR">${l.net}</cbc:LineExtensionAmount>
+    ${l.period_from && l.period_to ? `<cac:InvoicePeriod><cbc:StartDate>${esc(l.period_from)}</cbc:StartDate><cbc:EndDate>${esc(l.period_to)}</cbc:EndDate></cac:InvoicePeriod>` : ''}
     <cac:TaxTotal><cbc:TaxAmount currencyID="SAR">${l.vat}</cbc:TaxAmount></cac:TaxTotal>
     <cac:Item><cbc:Name>${esc(l.description)}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>${catOf(l)}</cbc:ID><cbc:Percent>${l.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item>
     <cac:Price><cbc:PriceAmount currencyID="SAR">${l.unit_price}</cbc:PriceAmount></cac:Price></cac:InvoiceLine>`).join('\n')}

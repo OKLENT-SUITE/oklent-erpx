@@ -1,10 +1,11 @@
 // UI smoke test: loads the real web client in jsdom, logs in against a RUNNING api, clicks every sidebar item
 // and fails if any screen shows an error toast, throws, or renders empty.
-//   npm i --no-save jsdom   (dev tool only, not part of the production image)
+//   cd api && npm ci   (jsdom is a devDependency: dev/CI only, never in the production image)
 //   BASE=http://localhost:3100 ADMIN_PASSWORD=... node tests/ui-smoke.mjs
-import { JSDOM } from 'jsdom';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+const { JSDOM } = createRequire(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'api', 'package.json'))('jsdom');   // jsdom is a devDependency of api/
 
 const BASE = process.env.BASE || 'http://localhost:3100';
 const PASS = process.env.ADMIN_PASSWORD || 'ChangeMe!2026';
@@ -88,7 +89,11 @@ if (opsEl) {
   chk('click section -> items open', opsEl.querySelector('.nav-sec.open')?.querySelector('.nav-sh')?.dataset.s === 'purch');
 }
 // visibility settings: hide POS, check it disappears, restore
+for (const v of ['journal', 'invoices', 'partners', 'bookings']) { await open_(v); const el = doc.querySelector('.tcount b.n'); chk(`1.3.4 counter on "${v}" uses the pager format (e.g. 1-30 / 852)`, !!el && /^\d+-\d+$/.test(el.textContent.trim()), el ? el.textContent : 'no counter'); }
 await open_('menus');
+{ const g = doc.querySelectorAll('.pm-masonry'), chips = doc.querySelectorAll('.pm-chip'), cards = doc.querySelectorAll('.pm-card'), boxes = doc.querySelectorAll('.pm-card input[type=checkbox]'), master = doc.querySelectorAll('.pm-chead input[type=checkbox]');
+  chk('1.3.1 menu settings: dashboard-style cards (group chips + one masonry flow + master checkbox per section + a checkbox per screen)', g.length === 1 && chips.length >= 5 && cards.length >= 8 && master.length >= 8 && boxes.length > master.length, [g.length, cards.length, master.length, boxes.length].join('/'));
+  chk('1.3.1 menu settings: old toggle switches are gone', doc.querySelectorAll('.mcard .sw').length === 0); }
 const pos = doc.querySelector('input[data-id="pos"]'); chk('settings screen lists the switches', !!pos && !!doc.querySelector('input[data-id="main:ops"]') && doc.querySelector('input[data-id="users"]')?.disabled !== false || !doc.querySelector('input[data-id="users"]'));
 pos.checked = false; pos.dispatchEvent(new w.Event('change')); await sleep(200);
 await flow('save menu visibility (hide نقاط البيع)', async () => { doc.querySelector('#sv').click(); });
@@ -122,6 +127,23 @@ await open_('geo'); { const nums = [...(doc.querySelectorAll('.kpi b') || [])].m
   chk('every main menu and section has an icon', heads.every(h => h.querySelector('svg.ico')) && secs.every(h => h.querySelector('svg.ico')));
   chk('menu icons are defined for every nav.json entry', (() => { const ic = JSON.parse(fs.readFileSync(path.join(root, 'web/nav.json'), 'utf8')).icons; const ids = nav.flatMap(m => ['main:' + m.id, ...m.secs.flatMap(sc => [...(sc.t ? ['sec:' + sc.id] : []), ...sc.kids.map(k => k[0])])]); return ids.every(id => ic[id]); })()); }
 await open_('products'); chk('products form: stock tracking + opening quantity', !!doc.getElementById('pst') && !!doc.getElementById('pq') && /المخزون/.test(doc.querySelector('#tb')?.textContent || ''));
+{ const sec = id => nav.flatMap(m => m.secs).find(x => x.id === id), has = (sid, k) => !!sec(sid)?.kids.some(x => x[0] === k);
+  chk('1.1.0 nav: المنتجات under المخزون, العروض stays under المبيعات (not duplicated)', has('stockm', 'products') && !has('sales', 'products') && has('sales', 'offers') && !has('stockm', 'offers')); }
+chk('1.1.0 products screen: no offers tab (offers moved to sales)', !doc.querySelector('#main .tabs') && !doc.getElementById('oa'));
+await open_('offers'); chk('1.1.0 offers screen: offer form + table, no product form', !!doc.getElementById('oa') && !doc.getElementById('pa') && /العروض/.test(doc.querySelector('#main h2')?.textContent || ''));
+await open_('stores'); chk('1.1.0 store settings: panes + KPI header, original field ids kept', doc.querySelectorAll('[data-pane]').length >= 4 && !!doc.querySelector('.shead') && ['ct', 'cb', 'ca', 'ft', 'wt', 'wg', 'wc', 'wp', 'ww', 'we', 'wa', 'wr', 'pm', 'wd', 'wf', 'wm', 'wpub', 'ws', 'cs', 'cd', 'sd', 'so'].every(i => !!doc.getElementById(i)));
+doc.querySelector('[data-pane="pay"]').click(); chk('1.1.0 store settings: switching pane shows only that pane and the save bar', !doc.getElementById('sec-pay').hidden && doc.getElementById('sec-type').hidden && !doc.getElementById('savebar').hidden);
+await open_('invoices'); { const k = [...doc.querySelector('#main').children]; const f = k.findIndex(e => e.querySelector?.('#ig')), t = k.findIndex(e => e.id === 'inv-tbl');
+  chk('1.1.1 invoices: issue form is above the list, collapsible, KPI strip follows', f >= 0 && f < t && k[f].tagName === 'DETAILS' && !!doc.querySelector('#main .kpi-grid')); }
+chk('1.1.2 invoices: record counter shows the count and the per-type breakdown', /عدد الفواتير/.test(doc.querySelector('#main .tcount')?.textContent || '') && !!doc.querySelector('#main .tchips .chip'));
+await open_('dashboard'); chk('1.2.0 dashboard: KPI tiles, charts, slicers and alerts/counters render', doc.querySelectorAll('#dash .kt').length >= 4 && doc.querySelectorAll('#dash .dn').length >= 2 && doc.querySelectorAll('#dash [data-p]').length === 5 && !!doc.querySelector('#dash .cn'));
+await open_('invoices'); { const d1 = doc.getElementById('inv-d1'), d2 = doc.getElementById('inv-d2'); d1.value = '2999-01-01'; d1.dispatchEvent(new w.Event('change')); chk('1.2.1 invoices: date filter hides rows outside the range and the counter shows 0 / 0 (pager format)', !doc.querySelector('#inv-tbl tbody tr td.num') && /^0-\d+$/.test((doc.querySelector('.tcount b.n')?.textContent || '').trim())); doc.getElementById('inv-dx').click(); chk('1.2.1 invoices: clearing the date restores the list', !!doc.querySelector('#inv-tbl tbody tr td.num')); }
+await open_('invoices'); { const rd = doc.getElementById('idt'); chk('1.3.0 invoices: invoice date field defaults to today and is capped at today', !!rd && /^\d{4}-\d{2}-\d{2}$/.test(rd.value) && rd.max === rd.value);
+  const ln = doc.querySelector('#ilines .il'), rent = ln.querySelector('.il-rent'); chk('1.3.0 invoices: rental period hidden for a normal line', rent.hidden === true);
+  const acc = ln.querySelector('.la'); acc.value = '4100'; acc.dispatchEvent(new w.Event('change')); chk('1.3.0 invoices: choosing rental (4100) reveals the from/to period fields', rent.hidden === false && !!ln.querySelector('.lf') && !!ln.querySelector('.lto'));
+  doc.getElementById('iadd').click(); chk('1.3.0 invoices: add-line button adds a product line', doc.querySelectorAll('#ilines .il').length === 2); }
+await open_('products'); { const k = [...doc.querySelector('#main').children]; const f = k.findIndex(e => e.querySelector?.('#pa')), t = k.findIndex(e => e.id === 'tb'); chk('1.3.0 products: new-product form is above the list', f >= 0 && f < t); }
+await open_('stock'); chk('1.3.0 stock: total quantity and total value cards + receipt date', /إجمالي الكميات بالمخزون/.test(doc.querySelector('#main').textContent) && /إجمالي قيمة المخزون/.test(doc.querySelector('#main').textContent) && doc.querySelectorAll('#main .stat').length >= 5 && !!doc.getElementById('rd'));
 await open_('stock'); chk('stock screen shows tracked items, KPIs and the receipt form', /أصناف متتبَّعة/.test(doc.querySelector('#main').textContent) && !!doc.getElementById('rs') && doc.querySelectorAll('#main tbody tr').length > 3);
 await open_('count'); { const inp = doc.querySelector('[data-c]'); chk('count screen has input per item and shows the difference live', !!inp); inp.value = String(Number(inp.dataset.h) + 2); inp.dispatchEvent(new w.Event('input')); chk('count screen: difference +2 shown', doc.getElementById('df' + inp.dataset.c).textContent === '+2'); }
 await open_('bookings'); { chk('bookings: status filters with counts + search', doc.querySelectorAll('#bf [data-f]').length === 6 && !!doc.getElementById('bq'));

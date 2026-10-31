@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = async f => import(pathToFileURL(path.join(root, 'api/src', f)).href);
-const { CSP, assertProductionSecrets, loginGuard } = await imp('security.js');
+const { CSP, assertProductionSecrets, loginGuard, validateDeployEnv } = await imp('security.js');
 const { renderMarkdown } = await imp('docs-render.js');
 let failed = 0; const chk = (n, ok, x = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${n}${ok ? '' : '  → ' + x}`); };
 const throws = (fn, re) => { try { fn(); return false; } catch (e) { return re.test(e.message); } };
@@ -47,7 +47,7 @@ chk('development: defaults still allowed (local demo)', !throws(() => assertProd
 { const nav = JSON.parse(fs.readFileSync(path.join(root, 'web/nav.json'), 'utf8')); const ids = []; for (const m of nav.mains) { ids.push('main:' + m.id); for (const s of m.secs) { ids.push('sec:' + s.id); for (const k of s.kids) ids.push(k[0]); } }
   chk('nav.json: all ids are unique', new Set(ids).size === ids.length, ids.filter((x, i) => ids.indexOf(x) !== i).join());
   chk('nav.json: protected ids exist', nav.protected.every(p => ids.includes(p)) && nav.defaultDisabled.every(p => ids.includes(p)));
-  const views = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8') + fs.readFileSync(path.join(root, 'web/commerce.js'), 'utf8');
+  const views = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8') + fs.readFileSync(path.join(root, 'web/commerce.js'), 'utf8') + fs.readFileSync(path.join(root, 'web/dashboard.js'), 'utf8');
   const missing = ids.filter(i => !i.includes(':') && !new RegExp(`(async ${i}\\(|VIEWS\\.${i}\\s*=|\\b${i}\\s*:)`).test(views));
   chk('nav.json: every screen id has a view implementation (or is a doc: link)', missing.length === 0, missing.join()); }
 
@@ -84,8 +84,8 @@ chk('development: defaults still allowed (local demo)', !throws(() => assertProd
   const outside = path.join(dir, 'keep.txt'); await fsp.writeFile(outside, 'x'); await U.removeUpload('/uploads/products/../keep.txt', dir); await U.removeUpload('https://x.com/a.png', dir);
   chk('uploads: removeUpload ignores foreign paths, deletes our own file', (await fsp.stat(outside)).size === 1 && (await U.removeUpload(url, dir)) === true && !(await fsp.stat(path.join(dir, 'products', path.basename(url))).catch(() => null)));
   await fsp.rm(dir, { recursive: true, force: true });
-  const ng2 = fs.readFileSync(path.join(root, 'deploy/nginx/default.conf'), 'utf8'), dc = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
-  chk('deploy: nginx allows a >1m body ONLY on the image route; /uploads proxied; compose mounts a persistent volume', /products\/\[0-9\]\+\/image\$ \{[^}]*client_max_body_size 3m/.test(ng2) && (ng2.match(/client_max_body_size/g) || []).length === 2 && /location \/uploads\//.test(ng2) && /erpx_uploads:\/app\/uploads/.test(dc) && /^  erpx_uploads:/m.test(dc)); }
+  const ng2 = ['default.conf', 'erpx-locations.conf'].map(f => fs.readFileSync(path.join(root, 'deploy/nginx', f), 'utf8')).join('\n'), dc = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+  chk('deploy: nginx allows a >1m body ONLY on the image route; /uploads proxied; compose mounts a persistent volume', /products\/\[0-9\]\+\/image\$ \{[^}]*client_max_body_size 3m/.test(ng2) && [...ng2.matchAll(/client_max_body_size\s+(\d+)([km])/g)].every(m => m[2] === 'k' || Number(m[1]) <= 1 || m[0].endsWith('3m')) && (ng2.match(/client_max_body_size 3m/g) || []).length === 1 && /location \/uploads\//.test(ng2) && /erpx_uploads:\/app\/uploads/.test(dc) && /^  erpx_uploads:/m.test(dc)); }
 
 // invoice print: ZATCA phase-1 elements for the tax invoice (B2B), the simplified invoice (B2C) and notes
 { const { renderInvoiceHtml, fmt } = await imp('invoice-print.js');
@@ -111,5 +111,27 @@ chk('development: defaults still allowed (local demo)', !throws(() => assertProd
   chk('version: package.json, api/src/version.js and web/app.js WEB_VERSION are identical', !!pj && pj === vj && pj === wj, `${pj} / ${vj} / ${wj}`);
   const { renderInvoiceHtml: R } = await imp('invoice-print.js'); const h = R({ i: { number: 'X', kind: 'simplified', issue_at: '2026-10-17T10:00:00Z', supply_date: '2026-10-17', icv: 1, subtotal: '1.00', vat_amount: '0.15', total: '1.15', issued_by: 'cashier1' }, co: { name_ar: 'ش', vat_number: '300000000000003' }, lines: [], qrSvg: '' });
   chk('invoice print shows the issuing user (cashier)', /cashier1/.test(h) && /Issued by/.test(h)); }
+
+// ---- SEC-04 / T-10: production configuration gate (every negative case must REFUSE; values are never echoed) ----
+{
+  const prod2 = o => ({ NODE_ENV: 'production', JWT_SECRET: 'k9Qv3xLw8ZpR2mTn7YbH5cJd1FgS4aUe6VoXiNz0', DATABASE_URL: 'postgres://erpx_app:Zp8wQ3rLm7TxV2nYk@db:5432/erpx', ...o });
+  chk('config: strong production env accepted', !throws(() => assertProductionSecrets(prod2()), /./));
+  chk('config: DB user erpx_owner refused (api must use the least-privilege role)', throws(() => assertProductionSecrets(prod2({ DATABASE_URL: 'postgres://erpx_owner:Zp8wQ3rLm7TxV2nYk@db:5432/erpx' })), /least-privilege/));
+  chk('config: DB user postgres refused', throws(() => assertProductionSecrets(prod2({ DATABASE_URL: 'postgres://postgres:Zp8wQ3rLm7TxV2nYk@db:5432/erpx' })), /least-privilege/));
+  chk('config: OWNER_DATABASE_URL inside the api process refused', throws(() => assertProductionSecrets(prod2({ OWNER_DATABASE_URL: 'postgres://erpx_owner:x@db/erpx' })), /OWNER_DATABASE_URL/));
+  chk('config: PUBLIC_RATE_LIMIT_MAX (test-only switch) refused in production', throws(() => assertProductionSecrets(prod2({ PUBLIC_RATE_LIMIT_MAX: '100000' })), /PUBLIC_RATE_LIMIT_MAX/));
+  chk('config: default admin password refused when present', throws(() => assertProductionSecrets(prod2({ ADMIN_PASSWORD: 'ChangeMe!2026' })), /ADMIN_PASSWORD/));
+  chk('config: JWT secret equal to the DB password refused', throws(() => assertProductionSecrets(prod2({ JWT_SECRET: 'Zp8wQ3rLm7TxV2nYkZp8wQ3rLm7TxV2nYk', DATABASE_URL: 'postgres://erpx_app:Zp8wQ3rLm7TxV2nYkZp8wQ3rLm7TxV2nYk@db/erpx' })), /different/));
+  chk('config: repeated-character secret refused (aaaaaaaa...)', throws(() => assertProductionSecrets(prod2({ JWT_SECRET: 'a'.repeat(40) })), /variety/));
+  chk('config: 12345 / password / qwerty style values refused', throws(() => assertProductionSecrets(prod2({ DATABASE_URL: 'postgres://erpx_app:Password123456@db/erpx' })), /weak/));
+  let msg = ''; try { assertProductionSecrets(prod2({ JWT_SECRET: 'dev-only-change-me' })); } catch (e) { msg = e.message; }
+  chk('config: the error message never contains the secret value', !msg.includes('dev-only-change-me'), msg);
+  const good = { NODE_ENV: 'production', JWT_SECRET: 'k9Qv3xLw8ZpR2mTn7YbH5cJd1FgS4aUe6VoXiNz0', OWNER_DB_PASSWORD: 'Hn4Rt8Wq2Lz6Xc9Vb3Mp', APP_DB_PASSWORD: 'Zp8wQ3rLm7TxV2nYk5Dg', ADMIN_PASSWORD: 'Jr7Ks2Nd9Fh4Gv6Bx1Qw' };
+  chk('deploy .env: strong distinct secrets accepted', validateDeployEnv(good).length === 0, validateDeployEnv(good).join(';'));
+  chk('deploy .env: the shipped .env.example values are refused (all four defaults)', validateDeployEnv({ NODE_ENV: 'development', OWNER_DB_PASSWORD: 'change-me-owner', APP_DB_PASSWORD: 'change-me-app', ADMIN_PASSWORD: 'change-me-admin', JWT_SECRET: 'change-me-long-random-string' }).length >= 5);
+  chk('deploy .env: missing secret refused', validateDeployEnv({ ...good, ADMIN_PASSWORD: '' }).some(p => /ADMIN_PASSWORD/.test(p)));
+  chk('deploy .env: reused secret refused', validateDeployEnv({ ...good, APP_DB_PASSWORD: good.OWNER_DB_PASSWORD }).some(p => /DIFFERENT/.test(p)));
+  chk('deploy .env: NODE_ENV must be production', validateDeployEnv({ ...good, NODE_ENV: 'development' }).some(p => /NODE_ENV/.test(p)));
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nALL UNIT CHECKS PASSED'); process.exit(failed ? 1 : 0);

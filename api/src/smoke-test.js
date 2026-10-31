@@ -117,12 +117,13 @@ if (!svc) {
 if (!svc) {
   svc = (await call('POST', '/api/products', { sku: 'SVC-' + Date.now().toString().slice(-6), name_ar: 'زيارة صيانة وما بعد البيع', kind: 'service', sale_price: '150.00', published: true })).body;
 }
+const svcPrice = Number(svc.sale_price ?? svc.price ?? svc.unit_price), expTotal = (Math.round(svcPrice * 115) / 100).toFixed(2);   // price comes from the DB catalogue (demo data may change it): expected = price + 15% VAT
 const dayOffset = 10 + (Math.floor(Date.now() / 1000) % 50);
 const d5 = new Date(Date.now() + dayOffset * 864e5).toISOString().slice(0, 10);
 const bk = (extra = {}, customer = {}) => call('POST', '/api/public/bookings', { slug: st.slug, customer: { name: 'عميل حجز', phone: '0555000222', region: riyadh.name_ar, city: 'الرياض', district: rDist.name_ar, street: 'شارع الاختبار', building_no: '1234', postal_code: '12345', ...customer }, when: { date: d5, time: '10:00' }, lines: [{ product_id: svc.id, qty: 1 }], ...extra }, null);
 check('booking with a city outside the chosen region is refused (ERPX-K022)', (await bk({}, { city: jeddah.name_ar })).body.error?.startsWith('ERPX-K022'));
 check('booking in the past is refused (ERPX-K024)', (await bk({ when: { date: '2020-01-01', time: '10:00' } })).body.error?.startsWith('ERPX-K024'));
-const b1 = await bk(); check('public booking accepted, price from DB (150 + VAT = 172.50)', b1.status === 200 && b1.body.total === '172.50', JSON.stringify(b1.body));
+const b1 = await bk(); check(`public booking accepted, price from DB (${svcPrice} + VAT = ${expTotal})`, b1.status === 200 && b1.body.total === expTotal, JSON.stringify(b1.body));
 const booking = (await call('GET', '/api/bookings')).body.find(x => x.number === b1.body.number);
 check('booking shows region / city / district', booking.region === 'منطقه الرياض' && booking.city === 'الرياض' && booking.district === rDist.name_ar);
 const techs = (await call('GET', '/api/technicians')).body; const tech = techs[0];
@@ -135,7 +136,7 @@ check('other technician can take it', (await call('POST', `/api/bookings/${booki
 check('complete booking (in_progress -> completed)', (await call('POST', `/api/bookings/${booking.id}/status`, { status: 'in_progress' })).status === 200 && (await call('POST', `/api/bookings/${booking.id}/status`, { status: 'completed' })).status === 200);
 check('standard invoice needs full buyer data', await (async () => { await call('PUT', `/api/bookings/${booking.id}/billing`, { buyer_name: 'شركة العميل', buyer_vat: '310000000000003' }); const r = await call('POST', `/api/bookings/${booking.id}/invoice`); return r.status === 422; })());
 await call('PUT', `/api/bookings/${booking.id}/billing`, { buyer_name: 'شركة العميل', buyer_vat: '310000000000003', buyer_cr: '1010111111', bill_building_no: '1234', bill_street: 'شارع الاختبار', bill_district: 'العليا', bill_city: 'الرياض', bill_postal_code: '12345' });
-const bi = await call('POST', `/api/bookings/${booking.id}/invoice`); check('booking -> tax invoice (standard)', bi.status === 200 && bi.body.total === '172.50', JSON.stringify(bi.body));
+const bi = await call('POST', `/api/bookings/${booking.id}/invoice`); check('booking -> tax invoice (standard)', bi.status === 200 && bi.body.total === expTotal, JSON.stringify(bi.body));
 check('booking cannot be invoiced twice', (await call('POST', `/api/bookings/${booking.id}/invoice`)).status === 409);
 check('invoiced booking cannot be cancelled', (await call('POST', `/api/bookings/${booking.id}/status`, { status: 'cancelled' })).status === 422);
 check('booking cancel (not invoiced)', (await call('POST', `/api/bookings/${booking2.id}/status`, { status: 'cancelled' })).status === 200);
@@ -290,6 +291,21 @@ const kinv = await call('POST', `/api/bookings/${kk1.id}/invoice`);
 const parts = (await call('GET', '/api/partners')).body; const person = parts.find(x => x.phone === '0555300001' && x.name_ar === 'عميل فواتير'); const company = parts.find(x => x.vat_number === '310999999999993');
 check('B2B booking invoice issued', kinv.status === 200, JSON.stringify(kinv.body));
 check('the customer who booked is NOT overwritten; the company is its own partner', !!person && !person.vat_number && !!company && company.name_ar === 'شركة الفواتير المحدودة' && company.id !== person.id);
+// ---- v1.1.0: product add-ons in a service request ----
+const g2 = (await call('POST', '/api/products', { sku: 'T11-' + T5, name_ar: 'منتج مرافق للخدمة', sale_price: '40.00', published: true, stock_tracked: true, opening_qty: 5 })).body;
+const stk2 = async () => Number((await call('GET', '/api/stock')).body.find(x => x.id === g2.id)?.on_hand);
+const bkAdd = (phone, time, lines) => call('POST', '/api/public/bookings', { slug: st5.slug, customer: { name: 'عميل إضافات', phone, region: reg9.name_ar, city: cityR.name_ar, district: dist9.name_ar, street: 'شارع الاختبار', building_no: '1111', postal_code: '11111' }, when: { date: slotDay, time }, lines }, null);
+check('a request with ONLY products is refused (ERPX-K029)', (await bkAdd('0555400001', '12:00', [{ product_id: g2.id, qty: 1 }])).body.error?.startsWith('ERPX-K029'));
+check('add-on quantity above the available stock is refused (ERPX-K028)', (await bkAdd('0555400002', '12:00', [{ product_id: svc9.id, qty: 1 }, { product_id: g2.id, qty: 6 }])).body.error?.startsWith('ERPX-K028'));
+const k3 = await bkAdd('0555400003', '12:00', [{ product_id: svc9.id, qty: 1 }, { product_id: g2.id, qty: 2 }]);
+const kk3 = (await call('GET', '/api/bookings')).body.find(x => x.number === k3.body.number);
+const det3 = kk3 && (await call('GET', `/api/bookings/${kk3.id}`)).body;
+check('service request with a product add-on accepted; both lines stored with DB prices', k3.status === 200 && det3?.lines?.length === 2 && det3.lines.some(l => l.product_id === g2.id && Number(l.qty) === 2 && Number(l.unit_price) === 40), JSON.stringify(k3.body));
+check('stock is NOT deducted at request time', (await stk2()) === 5);
+await call('POST', `/api/bookings/${kk3.id}/assign`, { technician_id: tA.id, date: slotDay, time: '12:00', duration: 60 });
+await call('POST', `/api/bookings/${kk3.id}/status`, { status: 'in_progress' }); await call('POST', `/api/bookings/${kk3.id}/status`, { status: 'completed' });
+const inv3 = await call('POST', `/api/bookings/${kk3.id}/invoice`);
+check('invoicing the request deducts the product from stock (5 -> 3)', inv3.status === 200 && (await stk2()) === 3, JSON.stringify(inv3.body));
 // geo import: tolerant region names
 const imp = await call('POST', '/api/geo/import', { rows: [{ region: 'الرياض', city: 'مدينة اختبار ' + T5, district: 'حي اختبار' }] });
 check('geo import accepts "الرياض" for "منطقه الرياض"', imp.status === 200 && imp.body.cities === 1 && imp.body.districts === 1, JSON.stringify(imp.body));

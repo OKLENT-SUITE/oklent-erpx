@@ -3,21 +3,73 @@
 
 export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) {
 
+  // ================= HR MASTER SETTINGS + ORGANIZATION =================
+  const HR_CATALOGS = {
+    contracts: 'hr_contract_types',
+    salaries: 'hr_salary_structures',
+    schedules: 'hr_work_schedules'
+  };
+  route('GET', '/api/hr/settings', 'accountant', async () => {
+    const [contracts, salaries, schedules, employees] = await Promise.all([
+      q('SELECT * FROM hr_contract_types ORDER BY name_ar'),
+      q('SELECT * FROM hr_salary_structures ORDER BY name_ar'),
+      q('SELECT * FROM hr_work_schedules ORDER BY name_ar'),
+      q(`SELECT e.id,e.employee_no,e.name_ar,e.job_title,e.department,e.status,e.manager_employee_id,e.contract_type_id,e.salary_structure_id,e.work_schedule_id,m.name_ar manager_name
+         FROM employees e LEFT JOIN employees m ON m.id=e.manager_employee_id ORDER BY e.name_ar`)
+    ]);
+    return { contracts: contracts.rows, salaries: salaries.rows, schedules: schedules.rows, employees: employees.rows };
+  });
+  route('POST', '/api/hr/settings/:kind', 'accountant', async req => {
+    const table = HR_CATALOGS[req.params.kind]; if (!table) throw httpErr(404, 'unknown HR setting');
+    const b = req.body || {}, name = typeof b.name_ar === 'string' ? b.name_ar.trim() : '';
+    if (!name || name.length > 120) throw httpErr(400, 'أدخل اسمًا صحيحًا لا يتجاوز 120 حرفًا');
+    if (typeof (b.details || '') !== 'string' || (b.details || '').length > 2000) throw httpErr(400, 'التفاصيل غير صالحة');
+    if (!b.settings || typeof b.settings !== 'object' || Array.isArray(b.settings)) throw httpErr(400, 'بيانات الإعداد غير صالحة');
+    return tx(req.user.username, async c => (await c.query(`INSERT INTO ${table}(name_ar,details,settings) VALUES($1,$2,$3::jsonb) RETURNING *`, [name,b.details||'',JSON.stringify(b.settings)])).rows[0]);
+  });
+  route('PUT', '/api/hr/settings/:kind/:id', 'accountant', async req => {
+    const table = HR_CATALOGS[req.params.kind], id = Number(req.params.id); if (!table) throw httpErr(404, 'unknown HR setting');
+    const b = req.body || {}, name = typeof b.name_ar === 'string' ? b.name_ar.trim() : '';
+    if (!Number.isInteger(id) || id < 1 || !name || name.length > 120 || typeof (b.details || '') !== 'string' || (b.details || '').length > 2000 || !b.settings || typeof b.settings !== 'object' || Array.isArray(b.settings)) throw httpErr(400, 'بيانات الإعداد غير صالحة');
+    return tx(req.user.username, async c => { const r = await c.query(`UPDATE ${table} SET name_ar=$1,details=$2,settings=$3::jsonb,updated_at=now() WHERE id=$4 RETURNING *`,[name,b.details||'',JSON.stringify(b.settings),id]); if (!r.rowCount) throw httpErr(404,'setting not found'); return r.rows[0]; });
+  });
+  route('DELETE', '/api/hr/settings/:kind/:id', 'accountant', async req => {
+    const table = HR_CATALOGS[req.params.kind], id = Number(req.params.id); if (!table) throw httpErr(404, 'unknown HR setting');
+    if (!Number.isInteger(id) || id < 1) throw httpErr(400, 'invalid setting id');
+    const r = await q(`DELETE FROM ${table} WHERE id=$1`,[id]); if (!r.rowCount) throw httpErr(404,'setting not found'); return { ok:true };
+  });
+  route('PUT', '/api/employees/:id/hr-settings', 'accountant', async req => {
+    const id=Number(req.params.id), b=req.body||{}; if(!Number.isInteger(id)||id<1) throw httpErr(400,'invalid employee id');
+    const ref=(v,n)=>{if(v===''||v===undefined||v===null)return null;const x=Number(v);if(!Number.isInteger(x)||x<1)throw httpErr(400,`${n} must be a positive integer`);return x;};
+    const manager=ref(b.manager_employee_id,'manager_employee_id'), contract=ref(b.contract_type_id,'contract_type_id'), salary=ref(b.salary_structure_id,'salary_structure_id'), schedule=ref(b.work_schedule_id,'work_schedule_id');
+    return tx(req.user.username,async c=>{
+      const {rows:[emp]}=await c.query('SELECT id FROM employees WHERE id=$1 FOR UPDATE',[id]); if(!emp)throw httpErr(404,'employee not found');
+      if(manager===id)throw httpErr(400,'لا يمكن تعيين الموظف مديرًا مباشرًا لنفسه');
+      if(manager){const exists=await c.query('SELECT 1 FROM employees WHERE id=$1',[manager]);if(!exists.rowCount)throw httpErr(400,'الموظف المحدد كمدير غير موجود');}
+      if(manager){const {rows:[cycle]}=await c.query(`WITH RECURSIVE chain AS (SELECT manager_employee_id id FROM employees WHERE id=$1 UNION ALL SELECT e.manager_employee_id FROM employees e JOIN chain c ON e.id=c.id WHERE e.manager_employee_id IS NOT NULL) SELECT 1 FROM chain WHERE id=$2 LIMIT 1`,[manager,id]);if(cycle)throw httpErr(400,'هذا الاختيار ينشئ دورة في الهيكل التنظيمي');}
+      const checks=[['hr_contract_types',contract],['hr_salary_structures',salary],['hr_work_schedules',schedule]];
+      for(const [table,value] of checks)if(value){const found=await c.query(`SELECT 1 FROM ${table} WHERE id=$1 AND is_active`,[value]);if(!found.rowCount)throw httpErr(400,'اختر إعدادًا نشطًا مسجلًا');}
+      return (await c.query(`UPDATE employees SET manager_employee_id=$1,contract_type_id=$2,salary_structure_id=$3,work_schedule_id=$4,updated_at=now() WHERE id=$5 RETURNING id,manager_employee_id,contract_type_id,salary_structure_id,work_schedule_id`,[manager,contract,salary,schedule,id])).rows[0];
+    });
+  });
+
   // ================= EMPLOYEES =================
-  route('GET', '/api/employees', 'viewer', async req => {
-    const isRestricted = req.user.role === 'viewer';
-    const { rows } = await q(`
-      SELECT e.id, e.employee_no, e.name_ar, e.name_en, e.national_id, e.status, e.branch_id,
+  // SEC-01: personal / financial HR data is an ALLOWLIST by role. Only accountant and admin receive the full record;
+  // every other role (viewer, cashier, any future role) gets the minimum operational directory. Forbidden fields are
+  // NOT selected at all (never present as null), so they cannot leak even when the database holds a value.
+  const HR_FULL_ROLES = new Set(['accountant', 'admin']);
+  const EMP_MIN_COLS = `e.id, e.employee_no, e.name_ar, e.name_en, e.status, e.branch_id, b.name_ar AS branch_name, e.department, e.job_title, e.manager_employee_id`;
+  const EMP_FULL_COLS = `e.id, e.employee_no, e.name_ar, e.name_en, e.national_id, e.status, e.branch_id,
              b.name_ar AS branch_name, e.department, e.job_title, e.cost_center, e.hire_date,
-             e.termination_date, e.phone, e.email, e.payment_method, e.notes, e.created_at,
-             ${isRestricted ? 'NULL::numeric' : 'e.basic_salary'} AS basic_salary,
-             ${isRestricted ? 'NULL::numeric' : 'e.housing_allowance'} AS housing_allowance,
-             ${isRestricted ? 'NULL::numeric' : 'e.transport_allowance'} AS transport_allowance,
-             ${isRestricted ? 'NULL::numeric' : 'e.other_allowances'} AS other_allowances,
-             ${isRestricted ? 'NULL::numeric' : 'e.gosi_deduction'} AS gosi_deduction,
-             ${isRestricted ? 'NULL::numeric' : 'e.other_deductions'} AS other_deductions,
-             ${isRestricted ? 'NULL::varchar' : 'e.bank_name'} AS bank_name,
-             ${isRestricted ? 'NULL::varchar' : 'e.iban'} AS iban
+             e.termination_date, e.phone, e.email, e.payment_method, e.notes, e.attachments, e.created_at,
+             e.basic_salary, e.housing_allowance, e.transport_allowance, e.other_allowances,
+             e.manager_employee_id,e.contract_type_id,e.salary_structure_id,e.work_schedule_id,
+             e.gosi_deduction, e.other_deductions, e.bank_name, e.iban`;
+  const empCols = req => (HR_FULL_ROLES.has(req.user.role) ? EMP_FULL_COLS : EMP_MIN_COLS);
+
+  route('GET', '/api/employees', 'viewer', async req => {
+    const { rows } = await q(`
+      SELECT ${empCols(req)}
       FROM employees e
       LEFT JOIN branches b ON b.id = e.branch_id
       ORDER BY e.id DESC
@@ -26,100 +78,91 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
   });
 
   route('GET', '/api/employees/:id', 'viewer', async req => {
-    const isRestricted = req.user.role === 'viewer';
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) throw httpErr(400, 'invalid employee id');
     const { rows: [e] } = await q(`
-      SELECT e.id, e.employee_no, e.name_ar, e.name_en, e.national_id, e.status, e.branch_id,
-             b.name_ar AS branch_name, e.department, e.job_title, e.cost_center, e.hire_date,
-             e.termination_date, e.phone, e.email, e.payment_method, e.notes, e.attachments, e.created_at,
-             ${isRestricted ? 'NULL::numeric' : 'e.basic_salary'} AS basic_salary,
-             ${isRestricted ? 'NULL::numeric' : 'e.housing_allowance'} AS housing_allowance,
-             ${isRestricted ? 'NULL::numeric' : 'e.transport_allowance'} AS transport_allowance,
-             ${isRestricted ? 'NULL::numeric' : 'e.other_allowances'} AS other_allowances,
-             ${isRestricted ? 'NULL::numeric' : 'e.gosi_deduction'} AS gosi_deduction,
-             ${isRestricted ? 'NULL::numeric' : 'e.other_deductions'} AS other_deductions,
-             ${isRestricted ? 'NULL::varchar' : 'e.bank_name'} AS bank_name,
-             ${isRestricted ? 'NULL::varchar' : 'e.iban'} AS iban
+      SELECT ${empCols(req)}
       FROM employees e
       LEFT JOIN branches b ON b.id = e.branch_id
       WHERE e.id = $1
-    `, [req.params.id]);
+    `, [id]);
     if (!e) throw httpErr(404, 'employee not found');
     return e;
   });
 
+  // ---- API-01: one validator for every employee write. Unknown / malformed input is refused with 400 (never NaN, never a raw DB error). ----
+  const bad = m => httpErr(400, m);
+  const optStr = (v, name, max) => { if (v === undefined || v === null || v === '') return null; if (typeof v !== 'string') throw bad(`${name} must be text`); const t = v.trim(); if (t.length > max) throw bad(`${name} is too long (max ${max})`); return t || null; };
+  const optMoney = (v, name) => { if (v === undefined || v === null || v === '') return undefined; const n = typeof v === 'number' ? v : (typeof v === 'string' && /^\d{1,10}(\.\d{1,2})?$/.test(v.trim()) ? Number(v) : NaN);
+    if (!Number.isFinite(n) || n < 0 || n > 9_999_999_999.99 || Math.round(n * 100) !== n * 100 && Math.abs(Math.round(n * 100) - n * 100) > 1e-6) throw bad(`${name} must be a non-negative amount with at most 2 decimals`); return n; };
+  const optDate = (v, name) => { if (v === undefined || v === null || v === '') return null; if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + 'T00:00:00Z')) || new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) !== v) throw bad(`${name} must be a valid date YYYY-MM-DD`); return v; };
+  const optEnum = (v, name, list) => { if (v === undefined || v === null || v === '') return null; if (!list.includes(v)) throw bad(`${name} must be one of: ${list.join(', ')}`); return v; };
+  const EMP_FIELDS = ['employee_no', 'name_ar', 'name_en', 'national_id', 'status', 'branch_id', 'branch', 'department', 'job_title', 'cost_center', 'hire_date', 'termination_date', 'phone', 'email',
+    'basic_salary', 'housing_allowance', 'transport_allowance', 'other_allowances', 'gosi_deduction', 'other_deductions', 'bank_name', 'iban', 'payment_method', 'notes'];
+  const MONEY = ['basic_salary', 'housing_allowance', 'transport_allowance', 'other_allowances', 'gosi_deduction', 'other_deductions'];
+  function parseEmployee(b, { create }) {
+    if (b === null || typeof b !== 'object' || Array.isArray(b)) throw bad('JSON object body required');
+    const unknown = Object.keys(b).filter(k => !EMP_FIELDS.includes(k)); if (unknown.length) throw bad('unknown field(s): ' + unknown.slice(0, 5).join(', '));
+    const o = { employee_no: optStr(b.employee_no, 'employee_no', 32), name_ar: optStr(b.name_ar, 'name_ar', 255), name_en: optStr(b.name_en, 'name_en', 255), national_id: optStr(b.national_id, 'national_id', 32),
+      status: optEnum(b.status, 'status', ['active', 'suspended', 'terminated']), department: optStr(b.department, 'department', 100), job_title: optStr(b.job_title, 'job_title', 100), cost_center: optStr(b.cost_center, 'cost_center', 50),
+      hire_date: optDate(b.hire_date, 'hire_date'), termination_date: optDate(b.termination_date, 'termination_date'), phone: optStr(b.phone, 'phone', 32), email: optStr(b.email, 'email', 128),
+      bank_name: optStr(b.bank_name, 'bank_name', 100), iban: optStr(b.iban, 'iban', 34), payment_method: optEnum(b.payment_method, 'payment_method', ['bank', 'cash']), notes: optStr(b.notes, 'notes', 5000) };
+    if (create && !o.name_ar) throw bad('name_ar is required');
+    if (b.name_ar !== undefined && !o.name_ar) throw bad('name_ar cannot be empty');
+    if (o.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email)) throw bad('email is not valid');
+    if (o.iban && !/^SA\d{22}$/.test(o.iban.replace(/\s/g, ''))) throw bad('iban must be a Saudi IBAN (SA + 22 digits)'); if (o.iban) o.iban = o.iban.replace(/\s/g, '');
+    if (o.hire_date && o.termination_date && o.termination_date < o.hire_date) throw bad('termination_date is before hire_date');
+    for (const k of MONEY) o[k] = optMoney(b[k], k);
+    if (b.branch_id !== undefined && b.branch_id !== null && b.branch_id !== '') { const n = Number(b.branch_id); if (!Number.isInteger(n) || n < 1) throw bad('branch_id must be a positive integer'); o.branch_id = n; }
+    o.branch = optStr(b.branch, 'branch', 20);
+    return o;
+  }
+  const resolveBranch = async (o, c) => o.branch_id ?? (o.branch ? ((await c.query('SELECT id FROM branches WHERE code=$1', [o.branch])).rows[0]?.id ?? (() => { throw bad('unknown branch code'); })()) : null);
+  const dupEmpNo = e => (e.code === '23505' && /employee_no/.test(e.constraint || e.message || '') ? httpErr(409, 'employee_no already exists') : e);
+
   route('POST', '/api/employees', 'accountant', async req => {
-    const b = req.body || {};
-    if (!b.name_ar || !b.name_ar.trim()) throw httpErr(400, 'name_ar is required');
-    let empNo = b.employee_no ? String(b.employee_no).trim() : null;
-    if (!empNo) {
-      const { rows: [{ count }] } = await q('SELECT count(*)::int AS count FROM employees');
-      empNo = 'EMP-' + String(count + 1).padStart(4, '0');
-    }
-    const branchId = b.branch_id ? Number(b.branch_id) : (b.branch ? (await q('SELECT id FROM branches WHERE code=$1', [b.branch])).rows[0]?.id : null);
-    const { rows: [emp] } = await q(`
-      INSERT INTO employees (
-        employee_no, name_ar, name_en, national_id, status, branch_id, department,
-        job_title, cost_center, hire_date, termination_date, phone, email,
-        basic_salary, housing_allowance, transport_allowance, other_allowances,
-        gosi_deduction, other_deductions, bank_name, iban, payment_method, notes, created_by
-      ) VALUES (
-        $1, $2, $3, $4, coalesce($5, 'active'), $6, $7,
-        $8, $9, coalesce($10, current_date), $11, $12, $13,
-        coalesce($14, 0), coalesce($15, 0), coalesce($16, 0), coalesce($17, 0),
-        coalesce($18, 0), coalesce($19, 0), $20, $21, coalesce($22, 'bank'), $23, $24
-      ) RETURNING *
-    `, [
-      empNo, b.name_ar.trim(), b.name_en || null, b.national_id || null, b.status, branchId, b.department || null,
-      b.job_title || null, b.cost_center || null, b.hire_date || null, b.termination_date || null, b.phone || null, b.email || null,
-      Number(b.basic_salary || 0), Number(b.housing_allowance || 0), Number(b.transport_allowance || 0), Number(b.other_allowances || 0),
-      Number(b.gosi_deduction || 0), Number(b.other_deductions || 0), b.bank_name || null, b.iban || null, b.payment_method, b.notes || null, req.user.username
-    ]);
-    return emp;
+    const o = parseEmployee(req.body, { create: true });
+    try {
+      return await tx(req.user.username, async c => {
+        // DATA-01: automatic numbers are allocated under a transaction-scoped advisory lock from max(existing EMP-nnnn) + 1, never from count(*)
+        // (count breaks after a delete and races under concurrency). Two concurrent creations queue here; the UNIQUE constraint remains the last line of defence.
+        let empNo = o.employee_no;
+        if (!empNo) {
+          await c.query('SELECT pg_advisory_xact_lock(727002)');
+          const { rows: [{ n }] } = await c.query("SELECT coalesce(max((substring(employee_no from '^EMP-(\\d+)$'))::int), 0) AS n FROM employees WHERE employee_no ~ '^EMP-\\d+$'");
+          empNo = 'EMP-' + String(n + 1).padStart(4, '0');
+        }
+        const branchId = await resolveBranch(o, c);
+        const { rows: [emp] } = await c.query(`
+          INSERT INTO employees (employee_no, name_ar, name_en, national_id, status, branch_id, department, job_title, cost_center, hire_date, termination_date, phone, email,
+            basic_salary, housing_allowance, transport_allowance, other_allowances, gosi_deduction, other_deductions, bank_name, iban, payment_method, notes, created_by)
+          VALUES ($1,$2,$3,$4,coalesce($5,'active'),$6,$7,$8,$9,coalesce($10::date,current_date),$11,$12,$13,coalesce($14::numeric,0),coalesce($15::numeric,0),coalesce($16::numeric,0),coalesce($17::numeric,0),coalesce($18::numeric,0),coalesce($19::numeric,0),$20,$21,coalesce($22,'bank'),$23,$24)
+          RETURNING *`, [empNo, o.name_ar, o.name_en, o.national_id, o.status, branchId, o.department, o.job_title, o.cost_center, o.hire_date, o.termination_date, o.phone, o.email,
+          o.basic_salary, o.housing_allowance, o.transport_allowance, o.other_allowances, o.gosi_deduction, o.other_deductions, o.bank_name, o.iban, o.payment_method, o.notes, req.user.username]);
+        return emp;
+      });
+    } catch (e) { throw dupEmpNo(e); }
   });
 
   route('PUT', '/api/employees/:id', 'accountant', async req => {
-    const b = req.body || {};
-    const branchId = b.branch_id ? Number(b.branch_id) : (b.branch ? (await q('SELECT id FROM branches WHERE code=$1', [b.branch])).rows[0]?.id : null);
-    const { rows: [emp] } = await q(`
-      UPDATE employees SET
-        name_ar = coalesce($1, name_ar),
-        name_en = coalesce($2, name_en),
-        national_id = coalesce($3, national_id),
-        status = coalesce($4, status),
-        branch_id = coalesce($5, branch_id),
-        department = coalesce($6, department),
-        job_title = coalesce($7, job_title),
-        cost_center = coalesce($8, cost_center),
-        hire_date = coalesce($9, hire_date),
-        termination_date = coalesce($10, termination_date),
-        phone = coalesce($11, phone),
-        email = coalesce($12, email),
-        basic_salary = coalesce($13, basic_salary),
-        housing_allowance = coalesce($14, housing_allowance),
-        transport_allowance = coalesce($15, transport_allowance),
-        other_allowances = coalesce($16, other_allowances),
-        gosi_deduction = coalesce($17, gosi_deduction),
-        other_deductions = coalesce($18, other_deductions),
-        bank_name = coalesce($19, bank_name),
-        iban = coalesce($20, iban),
-        payment_method = coalesce($21, payment_method),
-        notes = coalesce($22, notes),
-        updated_at = now()
-      WHERE id = $23
-      RETURNING *
-    `, [
-      b.name_ar, b.name_en, b.national_id, b.status, branchId, b.department,
-      b.job_title, b.cost_center, b.hire_date, b.termination_date, b.phone, b.email,
-      b.basic_salary !== undefined ? Number(b.basic_salary) : null,
-      b.housing_allowance !== undefined ? Number(b.housing_allowance) : null,
-      b.transport_allowance !== undefined ? Number(b.transport_allowance) : null,
-      b.other_allowances !== undefined ? Number(b.other_allowances) : null,
-      b.gosi_deduction !== undefined ? Number(b.gosi_deduction) : null,
-      b.other_deductions !== undefined ? Number(b.other_deductions) : null,
-      b.bank_name, b.iban, b.payment_method, b.notes, req.params.id
-    ]);
-    if (!emp) throw httpErr(404, 'employee not found');
-    return emp;
+    const id = Number(req.params.id); if (!Number.isInteger(id) || id < 1) throw bad('invalid employee id');
+    const o = parseEmployee(req.body, { create: false });
+    if (o.employee_no) throw bad('employee_no cannot be changed');
+    try {
+      return await tx(req.user.username, async c => {
+        const branchId = await resolveBranch(o, c);
+        const { rows: [emp] } = await c.query(`
+          UPDATE employees SET name_ar=coalesce($1,name_ar), name_en=coalesce($2,name_en), national_id=coalesce($3,national_id), status=coalesce($4,status), branch_id=coalesce($5,branch_id),
+            department=coalesce($6,department), job_title=coalesce($7,job_title), cost_center=coalesce($8,cost_center), hire_date=coalesce($9::date,hire_date), termination_date=coalesce($10::date,termination_date),
+            phone=coalesce($11,phone), email=coalesce($12,email), basic_salary=coalesce($13::numeric,basic_salary), housing_allowance=coalesce($14::numeric,housing_allowance), transport_allowance=coalesce($15::numeric,transport_allowance),
+            other_allowances=coalesce($16::numeric,other_allowances), gosi_deduction=coalesce($17::numeric,gosi_deduction), other_deductions=coalesce($18::numeric,other_deductions), bank_name=coalesce($19,bank_name), iban=coalesce($20,iban),
+            payment_method=coalesce($21,payment_method), notes=coalesce($22,notes), updated_at=now()
+          WHERE id=$23 RETURNING *`, [o.name_ar, o.name_en, o.national_id, o.status, branchId, o.department, o.job_title, o.cost_center, o.hire_date, o.termination_date, o.phone, o.email,
+          o.basic_salary, o.housing_allowance, o.transport_allowance, o.other_allowances, o.gosi_deduction, o.other_deductions, o.bank_name, o.iban, o.payment_method, o.notes, id]);
+        if (!emp) throw httpErr(404, 'employee not found');
+        return emp;
+      });
+    } catch (e) { throw dupEmpNo(e); }
   });
 
   route('DELETE', '/api/employees/:id', 'accountant', async req => {
@@ -131,7 +174,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
 
 
   // ================= PAYROLL =================
-  route('GET', '/api/payroll/runs', 'viewer', async () => {
+  route('GET', '/api/payroll/runs', 'accountant', async () => {
     const { rows } = await q(`
       SELECT pr.*, b.name_ar AS branch_name, je.entry_no AS journal_entry_no, pe.entry_no AS payment_entry_no
       FROM payroll_runs pr
@@ -143,7 +186,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
     return rows;
   });
 
-  route('GET', '/api/payroll/runs/:id', 'viewer', async req => {
+  route('GET', '/api/payroll/runs/:id', 'accountant', async req => {
     const isRestricted = req.user.role === 'viewer';
     const { rows: [run] } = await q(`
       SELECT pr.*, b.name_ar AS branch_name, je.entry_no AS journal_entry_no, pe.entry_no AS payment_entry_no
@@ -347,7 +390,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
 
 
   // ================= CUSTODY =================
-  route('GET', '/api/custodies', 'viewer', async () => {
+  route('GET', '/api/custodies', 'accountant', async () => {
     const { rows } = await q(`
       SELECT c.*, e.employee_no, e.name_ar AS employee_name, b.name_ar AS branch_name, je.entry_no AS journal_entry_no
       FROM custodies c
@@ -359,7 +402,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
     return rows;
   });
 
-  route('GET', '/api/custodies/:id', 'viewer', async req => {
+  route('GET', '/api/custodies/:id', 'accountant', async req => {
     const { rows: [c] } = await q(`
       SELECT c.*, e.employee_no, e.name_ar AS employee_name, b.name_ar AS branch_name, je.entry_no AS journal_entry_no
       FROM custodies c
@@ -505,7 +548,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
 
 
   // ================= EXPENSE CLAIMS =================
-  route('GET', '/api/expense-claims', 'viewer', async () => {
+  route('GET', '/api/expense-claims', 'accountant', async () => {
     const { rows } = await q(`
       SELECT ec.*, e.employee_no, e.name_ar AS employee_name, p.name_ar AS partner_name,
              b.name_ar AS branch_name, a.name_ar AS expense_account_name, je.entry_no AS journal_entry_no
@@ -520,7 +563,7 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
     return rows;
   });
 
-  route('GET', '/api/expense-claims/:id', 'viewer', async req => {
+  route('GET', '/api/expense-claims/:id', 'accountant', async req => {
     const { rows: [ec] } = await q(`
       SELECT ec.*, e.employee_no, e.name_ar AS employee_name, p.name_ar AS partner_name,
              b.name_ar AS branch_name, a.name_ar AS expense_account_name, je.entry_no AS journal_entry_no
@@ -663,44 +706,52 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
   const handlePayrollReport = async req => {
     const { period, branch_id } = req.query || {};
     const { rows } = await q(`
-      SELECT pr.period_name, b.name_ar AS branch_name, pr.status, pr.employee_count,
-             pr.total_basic, pr.total_allowances, pr.total_deductions, pr.total_net,
-             je.entry_no AS journal_entry_no, pe.entry_no AS payment_entry_no
+      SELECT split_part(pr.period_name, '-', 1)::int AS year,
+             split_part(pr.period_name, '-', 2)::int AS month,
+             b.name_ar AS branch_name,
+             count(*)::int AS runs_count,
+             coalesce(sum(pr.employee_count), 0)::int AS total_employees,
+             coalesce(sum(pr.total_basic + pr.total_allowances), 0) AS total_gross,
+             coalesce(sum(pr.total_deductions), 0) AS total_deductions,
+             coalesce(sum(pr.total_net), 0) AS total_net
       FROM payroll_runs pr
       LEFT JOIN branches b ON b.id = pr.branch_id
-      LEFT JOIN journal_entries je ON je.id = pr.journal_entry_id
-      LEFT JOIN journal_entries pe ON pe.id = pr.payment_entry_id
       WHERE ($1::text IS NULL OR pr.period_name = $1)
         AND ($2::int IS NULL OR pr.branch_id = $2)
-      ORDER BY pr.period_name DESC
+      GROUP BY pr.period_name, b.name_ar
+      ORDER BY pr.period_name DESC, b.name_ar NULLS FIRST
     `, [period || null, branch_id ? Number(branch_id) : null]);
     return rows;
   };
-  route('GET', '/api/reports/payroll', 'viewer', handlePayrollReport);
-  route('GET', '/api/reports/hr/payroll-summary', 'viewer', handlePayrollReport);
+  route('GET', '/api/reports/payroll', 'accountant', handlePayrollReport);
+  route('GET', '/api/reports/hr/payroll-summary', 'accountant', handlePayrollReport);
 
   const handleCustodiesReport = async () => {
     const { rows } = await q(`
-      SELECT c.custody_no, e.name_ar AS employee_name, b.name_ar AS branch_name,
-             c.custody_type, c.amount, c.settled_amount, c.returned_amount, c.balance,
-             c.status, c.disbursement_date
+      SELECT e.employee_no, e.name_ar, b.name_ar AS branch_name,
+             count(*)::int AS custody_count,
+             coalesce(sum(c.amount), 0) AS total_disbursed,
+             coalesce(sum(c.settled_amount), 0) AS total_spent,
+             coalesce(sum(c.returned_amount), 0) AS total_returned,
+             coalesce(sum(c.balance), 0) AS current_balance
       FROM custodies c
       JOIN employees e ON e.id = c.employee_id
-      LEFT JOIN branches b ON b.id = c.branch_id
-      ORDER BY c.status ASC, c.id DESC
+      LEFT JOIN branches b ON b.id = coalesce(c.branch_id, e.branch_id)
+      GROUP BY e.employee_no, e.name_ar, b.name_ar
+      ORDER BY current_balance DESC, e.name_ar
     `);
     return rows;
   };
-  route('GET', '/api/reports/custodies', 'viewer', handleCustodiesReport);
-  route('GET', '/api/reports/hr/custody-balances', 'viewer', handleCustodiesReport);
+  route('GET', '/api/reports/custodies', 'accountant', handleCustodiesReport);
+  route('GET', '/api/reports/hr/custody-balances', 'accountant', handleCustodiesReport);
 
   const handleExpensesReport = async req => {
     const { from, to, branch_id, category } = req.query || {};
     const { rows } = await q(`
-      SELECT ec.category, b.name_ar AS branch_name, ec.status,
-             count(*)::int AS count,
-             sum(ec.net_amount) AS total_net,
-             sum(ec.vat_amount) AS total_vat,
+      SELECT ec.category, b.name_ar AS branch_name,
+             count(*)::int AS claims_count,
+             sum(ec.net_amount) AS net_amount,
+             sum(ec.vat_amount) AS vat_amount,
              sum(ec.total_amount) AS total_amount
       FROM expense_claims ec
       LEFT JOIN branches b ON b.id = ec.branch_id
@@ -708,11 +759,11 @@ export function registerHR({ app, route, auth, q, tx, httpErr, dateOr, today }) 
         AND ($2::date IS NULL OR ec.expense_date <= $2)
         AND ($3::int IS NULL OR ec.branch_id = $3)
         AND ($4::text IS NULL OR ec.category = $4)
-      GROUP BY ec.category, b.name_ar, ec.status
+      GROUP BY ec.category, b.name_ar
       ORDER BY total_amount DESC
     `, [from || null, to || null, branch_id ? Number(branch_id) : null, category || null]);
     return rows;
   };
-  route('GET', '/api/reports/expenses', 'viewer', handleExpensesReport);
-  route('GET', '/api/reports/hr/expenses-by-category', 'viewer', handleExpensesReport);
+  route('GET', '/api/reports/expenses', 'accountant', handleExpensesReport);
+  route('GET', '/api/reports/hr/expenses-by-category', 'accountant', handleExpensesReport);
 }

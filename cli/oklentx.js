@@ -13,7 +13,7 @@ async function call(m, p, body) {
   const j = await r.json().catch(() => ({})); if (!r.ok) { console.error(`✗ ${r.status} ${j.error || ''}`); process.exit(1); } return j;
 }
 const money = v => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }).padStart(14);
-const HELP = `OKLENT BUSINESS CLI (v1.0.0) — إدارة الأعمال والمحرك المحاسبي
+const HELP = `OKLENT BUSINESS CLI (v1.4.9) — إدارة الأعمال والمحرك المحاسبي
 oklentx <command>
   login --user admin --password ***      accounts                         periods
   tb [--from D --to D]                   is [--from D --to D]             bs [--to D]
@@ -51,3 +51,4 @@ const out = {
 };
 if (!out[cmd]) { console.log(HELP); process.exit(cmd ? 1 : 0); }
 await out[cmd]();
+

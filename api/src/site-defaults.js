@@ -79,7 +79,7 @@ export async function readiness(q, storeId) {
     { k: 'content', t: 'عنوان الموقع والنبذة وسياسة الاسترجاع مكتملة', ok: !blank(site.title_ar) && !blank(site.about_ar) && !blank(site.return_policy_ar), fix: 'اضغط «ضبط الإعدادات الافتراضية»' },
     { k: 'contact', t: 'وسيلة تواصل واحدة على الأقل (جوال / واتساب / بريد)', ok: !blank(site.phone) || !blank(site.whatsapp) || !blank(site.email), fix: 'أدخل رقم الجوال أو الواتساب' },
     { k: 'pay', t: 'طريقة دفع واحدة على الأقل', ok: (site.payment_methods || []).length > 0, fix: 'اختر طريقة دفع' },
-    { k: 'products', t: 'منتج واحد على الأقل منشور', ok: p.total > 0, fix: 'انشر منتجاً من «المنتجات والعروض»' },
+    { k: 'products', t: 'منتج واحد على الأقل منشور', ok: p.total > 0, fix: 'انشر منتجاً من «المخزون ← المنتجات والأصناف»' },
     { k: 'delivery', t: f.includes('delivery') ? 'رسوم التوصيل محددة' : 'التوصيل غير مفعّل (لا حاجة لرسوم)', ok: !f.includes('delivery') || Number(site.delivery_fee) >= 0, warn: f.includes('delivery') && Number(site.delivery_fee) === 0 , fix: 'رسوم التوصيل صفر (توصيل مجاني دائماً)'}
   ];
   if (p.bookable > 0 || f.includes('booking')) {

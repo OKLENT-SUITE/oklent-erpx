@@ -1,10 +1,12 @@
 // Stores, storefront, products/offers, POS, online orders, bank transfers, quick finance, sales reports, user admin.
 import { applySiteDefaults, readiness, isMoney, money } from './site-defaults.js';
 import { riyadhToday } from './dates.js';
+import { assertPasswordPolicy } from './security.js';
+import { isMultiTenant, currentTenant } from './tenancy.js';
 import { validateImage, saveProductImage, removeUpload, isOwnUpload } from './uploads.js';
 const RANK = { viewer: 1, cashier: 2, accountant: 3, admin: 4 };
 const bucket = new Map();   // naive in-memory rate limiter (per process). Use a reverse proxy / Redis limiter when scaling out.
-const LIMIT = Number(process.env.PUBLIC_RATE_LIMIT_MAX) || 0;   // tests only: raises the public order/booking limits (ignored in production)
+const LIMIT = process.env.NODE_ENV === 'production' ? 0 : (Number(process.env.PUBLIC_RATE_LIMIT_MAX) || 0);   // tests only: raises the public order/booking limits. Really ignored in production (SEC-03); the production guard also refuses to start if it is set
 function limited(key, max, windowMs) {
   if (LIMIT && /^[ob]:/.test(key)) max = LIMIT;
   if (process.env.NODE_ENV !== 'production' && /^[ob]:/.test(key)) max = Math.max(max, 500);
@@ -13,9 +15,10 @@ function limited(key, max, windowMs) {
 }
 setInterval(() => { const now = Date.now(); for (const [k, v] of bucket) if (!v.some(t => now - t < 600000)) bucket.delete(k); }, 300000).unref();
 
-export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpErr, UPLOAD_DIR }) {
+export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpErr, UPLOAD_DIR, idempotent }) {
   const dateOr = (v, d) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : d);
   const today = () => riyadhToday();
+  const scope = () => (isMultiTenant() ? currentTenant()?.slug || null : null);   // tenant folder for uploaded files (null = single-company layout)
   const must = (b, ...keys) => { for (const k of keys) if (b?.[k] === undefined || b[k] === '') throw httpErr(400, `${k} is required`); };
   const storeOf = async (id, feature) => {
     const { rows: [s] } = await q('SELECT s.*, b.code branch_code FROM stores s LEFT JOIN branches b ON b.id=s.branch_id WHERE s.id=$1 AND s.is_active', [id]);
@@ -81,16 +84,16 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
   app.route({ method: 'POST', url: '/api/products/:id/image', onRequest: auth('accountant'), handler: async req => {
     const t = validateImage(req.body, req.headers['content-type']); const id = Number(req.params.id); if (!Number.isInteger(id) || id < 1) throw httpErr(400, 'invalid product id');
     if (!(await q('SELECT 1 FROM products WHERE id=$1', [id])).rows.length) throw httpErr(404, 'product not found');
-    const url = await saveProductImage(req.body, UPLOAD_DIR); let old;
+    const url = await saveProductImage(req.body, UPLOAD_DIR, scope()); let old;
     try { old = await tx(req.user.username, async c => { const { rows: [cur] } = await c.query('SELECT image_url FROM products WHERE id=$1 FOR UPDATE', [id]); if (!cur) throw httpErr(404, 'product not found');
         await c.query('UPDATE products SET image_url=$2 WHERE id=$1', [id, url]); return cur.image_url; }); }
-    catch (e) { await removeUpload(url, UPLOAD_DIR); throw e; }
-    if (old && old !== url) await removeUpload(old, UPLOAD_DIR);
+    catch (e) { await removeUpload(url, UPLOAD_DIR, scope()); throw e; }
+    if (old && old !== url) await removeUpload(old, UPLOAD_DIR, scope());
     return { id, image_url: url, type: t.mime, bytes: req.body.length }; } });
   route('DELETE', '/api/products/:id/image', 'accountant', async req => { const id = Number(req.params.id); if (!Number.isInteger(id) || id < 1) throw httpErr(400, 'invalid product id');
     const old = await tx(req.user.username, async c => { const { rows: [cur] } = await c.query('SELECT image_url FROM products WHERE id=$1 FOR UPDATE', [id]); if (!cur) throw httpErr(404, 'product not found');
       await c.query('UPDATE products SET image_url=NULL WHERE id=$1', [id]); return cur.image_url; });
-    if (isOwnUpload(old)) await removeUpload(old, UPLOAD_DIR); return { id, image_url: null }; });
+    if (isOwnUpload(old, scope())) await removeUpload(old, UPLOAD_DIR, scope()); return { id, image_url: null }; });
   route('GET', '/api/offers', 'viewer', async () => (await q(`SELECT o.*, p.name_ar product FROM offers o LEFT JOIN products p ON p.id=o.product_id ORDER BY o.id DESC`)).rows);
   route('POST', '/api/offers', 'accountant', async req => { const b = req.body || {}; must(b, 'code', 'name_ar', 'discount_type', 'value', 'start_date', 'end_date');
     return tx(req.user.username, async c => (await c.query(
@@ -167,6 +170,20 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
       FROM invoices i JOIN invoice_lines il ON il.invoice_id=i.id JOIN accounts a ON a.id=il.revenue_account_id LEFT JOIN branches b ON b.id=i.branch_id LEFT JOIN partners p ON p.id=i.partner_id
       WHERE (i.issue_at AT TIME ZONE 'Asia/Riyadh')::date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1`, [dateOr(req.query.from, today().slice(0, 4) + '-01-01'), dateOr(req.query.to, today())])).rows;
   });
+  route('GET', '/api/reports/sales/details', 'viewer', async req => (await q(`
+    SELECT i.id, i.number AS invoice_no, (i.issue_at AT TIME ZONE 'Asia/Riyadh')::date AS issue_date,
+           coalesce(p.name_ar, 'عميل نقدي') AS customer, coalesce(b.name_ar, '—') AS branch, i.kind,
+           sum(CASE WHEN i.kind='credit' THEN -il.net ELSE il.net END) AS net,
+           sum(CASE WHEN i.kind='credit' THEN -il.vat ELSE il.vat END) AS vat,
+           sum(CASE WHEN i.kind='credit' THEN -(il.net + il.vat) ELSE il.net + il.vat END) AS total
+    FROM invoices i
+    JOIN invoice_lines il ON il.invoice_id=i.id
+    LEFT JOIN branches b ON b.id=i.branch_id
+    LEFT JOIN partners p ON p.id=i.partner_id
+    WHERE (i.issue_at AT TIME ZONE 'Asia/Riyadh')::date BETWEEN $1 AND $2
+    GROUP BY i.id, i.number, i.issue_at, p.name_ar, b.name_ar, i.kind
+    ORDER BY i.issue_at DESC, i.id DESC
+  `, [dateOr(req.query.from, today().slice(0, 4) + '-01-01'), dateOr(req.query.to, today())])).rows);
 
 
   // ---- purchases (المشتريات): vendor bills, payments, AP aging, reports ----
@@ -182,6 +199,17 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
   route('GET', '/api/reports/purchases', 'viewer', async req => (await q(`SELECT ${PG[req.query.group] || PG.month} AS k, sum(b.net) net, sum(b.vat) vat, sum(b.total) total, count(*) bills
     FROM vendor_bills b JOIN partners p ON p.id=b.vendor_id JOIN accounts a ON a.id=b.account_id LEFT JOIN branches br ON br.id=b.branch_id
     WHERE b.bill_date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1`, [dateOr(req.query.from, today().slice(0, 4) + '-01-01'), dateOr(req.query.to, today())])).rows);
+  route('GET', '/api/reports/purchases/details', 'viewer', async req => (await q(`
+    SELECT b.id, b.number AS invoice_no, b.supplier_ref, b.bill_date, p.name_ar AS vendor,
+           coalesce(br.name_ar, '—') AS branch, a.code AS account_code, a.name_ar AS account_name,
+           b.net, b.vat, b.total, fn_bill_outstanding(b.id) AS outstanding
+    FROM vendor_bills b
+    JOIN partners p ON p.id=b.vendor_id
+    JOIN accounts a ON a.id=b.account_id
+    LEFT JOIN branches br ON br.id=b.branch_id
+    WHERE b.bill_date BETWEEN $1 AND $2
+    ORDER BY b.bill_date DESC, b.id DESC
+  `, [dateOr(req.query.from, today().slice(0, 4) + '-01-01'), dateOr(req.query.to, today())])).rows);
 
 
   // ---- Saudi geography ----
@@ -248,14 +276,19 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
       }
       return id; });
     const lines = (await q('SELECT description, qty, unit_price, discount, tax_code, revenue_account FROM booking_lines WHERE booking_id=$1 ORDER BY id', [k.id])).rows;
+    // product add-ons (goods) that track stock leave the warehouse in the same transaction as the invoice
+    const moves = (await q('SELECT l.product_id, l.qty FROM booking_lines l JOIN products p ON p.id=l.product_id WHERE l.booking_id=$1 AND p.kind=\'goods\' AND p.stock_tracked', [k.id])).rows;
     return issueInvoice(req.user.username, { kind: std ? 'standard' : 'simplified', partner_id: partnerId, branch: k.branch, supply_date: String(k.scheduled_at).slice(0, 10), due_date: today(), lines },
-      async (c, id) => { await c.query('SELECT link_booking_invoice($1,$2,$3,$4)', [k.id, id, partnerId, req.user.username]); });
+      async (c, id, inv) => { await c.query('SELECT link_booking_invoice($1,$2,$3,$4)', [k.id, id, partnerId, req.user.username]);
+        for (const mv of moves) await c.query(`SELECT stock_move($1,$2,$3,'sale',$4,NULL,$5)`, [mv.product_id, k.store_id, -Number(mv.qty), inv.number, req.user.username]); });
   });
-  app.post('/api/public/bookings', async req => {
+  app.post('/api/public/bookings', async (req, reply) => {
     if (limited('b:' + req.ip, 10, 600000)) throw httpErr(429, 'too many bookings, try later');
     const b = req.body || {};
-    const { rows: [r] } = await q('SELECT * FROM place_booking($1,$2::jsonb,$3::jsonb,$4::jsonb)', [b.slug, JSON.stringify(b.customer || {}), JSON.stringify(b.when || {}), JSON.stringify(b.lines || [])]);
-    return { number: r.number, total: r.total };
+    return idempotent({ q, httpErr, req, reply, scope: 'booking', fn: async () => {
+      const { rows: [r] } = await q('SELECT * FROM place_booking($1,$2::jsonb,$3::jsonb,$4::jsonb)', [b.slug, JSON.stringify(b.customer || {}), JSON.stringify(b.when || {}), JSON.stringify(b.lines || [])]);
+      return { number: r.number, total: r.total };
+    } });
   });
 
   // ---- owners (الملاك) ----
@@ -270,12 +303,52 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
     for (const o of req.body?.owners || []) await c.query('INSERT INTO property_ownership(property_id,owner_id,share_pct) VALUES ($1,$2,$3)', [req.params.id, o.owner_id, o.share_pct]);
     return { ok: true }; }));
 
-  // ---- stock (quantities only) ----
-  route('GET', '/api/stock', 'viewer', async req => (await q(`SELECT p.id, p.sku, p.name_ar, p.category, s.id store_id, s.name_ar store, fn_on_hand(p.id,s.id) on_hand, fn_reserved(p.id,s.id) reserved, fn_available(p.id,s.id) available
-    FROM products p CROSS JOIN stores s WHERE p.stock_tracked AND p.is_active AND s.is_active AND ($1::int IS NULL OR s.id=$1) ORDER BY s.id, p.name_ar`, [req.query.store_id || null])).rows);
-  route('GET', '/api/stock/moves', 'viewer', async req => (await q(`SELECT m.*, p.name_ar product, p.sku, s.name_ar store FROM stock_moves m JOIN products p ON p.id=m.product_id JOIN stores s ON s.id=m.store_id WHERE ($1::int IS NULL OR m.product_id=$1) AND ($2::int IS NULL OR m.store_id=$2) ORDER BY m.id DESC LIMIT 200`, [req.query.product_id || null, req.query.store_id || null])).rows);
+  // ---- stock: quantities valued at MOVING AVERAGE COST (see db/init/200_inventory_costing_invoice_lines.sql) ----
+  route('GET', '/api/stock/unvalued', 'viewer', async () => (await q(`SELECT p.id,p.sku,p.name_ar,p.cost_price,c.qty on_hand,c.avg_cost
+    FROM products p JOIN product_costing c ON c.product_id=p.id WHERE p.stock_tracked AND p.is_active AND c.qty>0 AND c.avg_cost<=0 ORDER BY p.name_ar,p.sku`)).rows);
+  route('POST', '/api/stock/initial-costs', 'accountant', async req => {
+    const b = req.body || {}; must(b, 'reference');
+    if (!Array.isArray(b.items) || !b.items.length || b.items.length > 200) throw httpErr(400, 'أدخل تكلفة صنف واحد على الأقل');
+    if (String(b.reference).trim().length < 2) throw httpErr(400, 'أدخل مرجع مستند التكلفة');
+    const ids = new Set();
+    for (const item of b.items) { const id = Number(item.product_id), cost = Number(item.unit_cost); if (!Number.isInteger(id) || id < 1 || ids.has(id) || !Number.isFinite(cost) || cost <= 0) throw httpErr(400, 'تحقق من الأصناف والتكاليف المدخلة؛ التكلفة يجب أن تكون أكبر من صفر'); ids.add(id); }
+    return tx(req.user.username, async c => {
+      let value = 0;
+      for (const item of b.items) {
+        const { rows: [r] } = await c.query(`SELECT set_stock_initial_cost($1,$2::numeric,$3,$4) event_id, qty FROM product_costing WHERE product_id=$1`, [item.product_id, item.unit_cost, String(b.reference).trim(), req.user.username]);
+        if (!r) throw httpErr(404, 'الصنف غير موجود في تقييم المخزون');
+        value += Number(r.qty) * Number(item.unit_cost);
+      }
+      return { valued_count: ids.size, value_added: value };
+    });
+  });
+  route('GET', '/api/stock', 'viewer', async req => (await q(`SELECT p.id, p.sku, p.name_ar, p.category, s.id store_id, s.name_ar store, fn_on_hand(p.id,s.id) on_hand, fn_reserved(p.id,s.id) reserved, fn_available(p.id,s.id) available,
+      coalesce(c.avg_cost, p.cost_price) avg_cost, round(greatest(fn_on_hand(p.id,s.id),0) * coalesce(c.avg_cost, p.cost_price), 2) stock_value
+    FROM products p CROSS JOIN stores s LEFT JOIN product_costing c ON c.product_id=p.id WHERE p.stock_tracked AND p.is_active AND s.is_active AND ($1::int IS NULL OR s.id=$1) ORDER BY s.id, p.name_ar`, [req.query.store_id || null])).rows);
+  // totals for the coloured cards: items, total quantity, total value (selected store or all) + ledger comparison (1140)
+  route('GET', '/api/stock/summary', 'viewer', async req => {
+    const { rows: [t] } = await q(`SELECT count(*)::int items, coalesce(sum(greatest(on_h,0)),0) total_qty, coalesce(sum(round(greatest(on_h,0) * av, 2)),0) total_value,
+        count(*) FILTER (WHERE avail <= 0)::int out_of_stock, count(*) FILTER (WHERE avail > 0 AND avail <= 5)::int low_stock
+      FROM (SELECT fn_on_hand(p.id,s.id) on_h, fn_available(p.id,s.id) avail, coalesce(c.avg_cost, p.cost_price) av FROM products p CROSS JOIN stores s LEFT JOIN product_costing c ON c.product_id=p.id
+            WHERE p.stock_tracked AND p.is_active AND s.is_active AND ($1::int IS NULL OR s.id=$1)) x`, [req.query.store_id || null]);
+    const { rows: [g] } = await q('SELECT fn_stock_value() stock_value, fn_inventory_gl_balance() gl_balance');
+    return { ...t, all_stock_value: g.stock_value, gl_balance: g.gl_balance, gap: (Math.round((Number(g.stock_value) - Number(g.gl_balance)) * 100) / 100).toFixed(2) };
+  });
+  route('GET', '/api/stock/moves', 'viewer', async req => (await q(`SELECT m.id, m.product_id, m.store_id, m.qty, m.kind, m.ref, m.note, m.created_by, m.created_at, coalesce(m.move_date, (m.created_at AT TIME ZONE 'Asia/Riyadh')::date)::text move_date,
+      m.unit_cost, round(abs(m.qty) * coalesce(m.unit_cost, 0), 2) amount, e.entry_no, p.name_ar product, p.sku, s.name_ar store
+    FROM stock_moves m JOIN products p ON p.id=m.product_id JOIN stores s ON s.id=m.store_id LEFT JOIN journal_entries e ON e.id=m.entry_id
+    WHERE ($1::int IS NULL OR m.product_id=$1) AND ($2::int IS NULL OR m.store_id=$2) ORDER BY m.id DESC LIMIT 200`, [req.query.product_id || null, req.query.store_id || null])).rows);
+  // goods receipt (purchase): date, unit cost, VAT and how it is paid -> journal entry + new average cost. Without unit_cost it is a quantity-only receipt at the current average (no entry).
   route('POST', '/api/stock/receive', 'accountant', async req => { const b = req.body || {}; must(b, 'product_id', 'store_id', 'qty'); if (!(Number(b.qty) > 0)) throw httpErr(400, 'qty must be positive');
-    return tx(req.user.username, async c => ({ id: (await c.query(`SELECT stock_move($1,$2,$3,'receipt',$4,$5,$6) id`, [b.product_id, b.store_id, b.qty, b.ref, b.note, req.user.username])).rows[0].id })); });
+    if (b.date && !/^\d{4}-\d{2}-\d{2}$/.test(b.date)) throw httpErr(400, 'تاريخ الاستلام غير صالح');
+    const hasCost = b.unit_cost !== undefined && b.unit_cost !== null && b.unit_cost !== ''; if (hasCost && !(Number(b.unit_cost) >= 0)) throw httpErr(400, 'تكلفة الوحدة غير صالحة');
+    const mode = ['credit', 'cash', 'bank'].includes(b.mode) ? b.mode : 'cash';
+    return tx(req.user.username, async c => { const { rows: [r] } = await c.query(`SELECT * FROM receive_stock($1,$2,$3::numeric,$4::numeric,$5::date,$6,$7,$8,$9::int,$10::numeric,$11::date,$12)`,
+      [b.product_id, b.store_id, b.qty, hasCost ? b.unit_cost : null, b.date || null, b.ref || null, b.note || null, mode, b.vendor_id || null, b.vat_rate === 15 || b.vat_rate === '15' ? 15 : 0, b.due_date || null, req.user.username]);
+      return { id: r.r_move_id, entry_id: r.r_entry_id, amount: r.r_amount, avg_cost: r.r_avg_cost }; }); });
+  // one-time: stock that existed before valuation was introduced has no ledger entry -> Dr 1140 / Cr equity (admin / accountant, explicit)
+  route('POST', '/api/stock/post-opening', 'accountant', async req => { const b = req.body || {}; must(b, 'equity_account');
+    return tx(req.user.username, async c => ({ entry_id: (await c.query('SELECT post_stock_opening_valuation($1::date,$2,$3) id', [b.date || null, b.equity_account, req.user.username])).rows[0].id })); });
   route('POST', '/api/stock/count', 'accountant', async req => { const b = req.body || {}; must(b, 'store_id'); const done = [];
     await tx(req.user.username, async c => { for (const x of b.counts || []) { await c.query('SELECT 1 FROM products WHERE id=$1 FOR UPDATE', [x.product_id]); const { rows: [r] } = await c.query('SELECT fn_on_hand($1,$2) h', [x.product_id, b.store_id]); const diff = Number(x.counted) - Number(r.h);
       if (x.counted === '' || x.counted === null || Number.isNaN(Number(x.counted)) || Number(x.counted) < 0) continue;
@@ -287,13 +360,14 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
     'INSERT INTO branches(code,name_ar,name_en,city) VALUES ($1,$2,$3,$4) RETURNING *', [b.code, b.name_ar, b.name_en, b.city])).rows[0]); });
   route('PUT', '/api/branches/:id', 'admin', async req => tx(req.user.username, async c => (await c.query('UPDATE branches SET is_active=$2 WHERE id=$1 RETURNING *', [req.params.id, !!req.body?.is_active])).rows[0]));
   route('GET', '/api/users', 'admin', async () => (await q('SELECT id,username,full_name,role,is_active FROM users ORDER BY id')).rows);
-  route('POST', '/api/users', 'admin', async req => { const b = req.body || {}; must(b, 'username', 'password', 'role');
+  route('POST', '/api/users', 'admin', async req => { const b = req.body || {}; must(b, 'username', 'password', 'role'); assertPasswordPolicy(b.password, b.username);
     return tx(req.user.username, async c => ({ id: (await c.query('SELECT admin_create_user($1,$2,$3,$4,$5) id', [b.username, b.password, b.role, b.full_name, req.user.username])).rows[0].id })); });
   route('PUT', '/api/users/:id', 'admin', async req => tx(req.user.username, async c => { await c.query('SELECT admin_set_user($1,$2,$3,$4)', [req.params.id, req.body?.role, !!req.body?.is_active, req.user.username]); return { ok: true }; }));
-  route('POST', '/api/me/password', 'viewer', async req => tx(req.user.username, async c => { await c.query('SELECT change_password($1,$2,$3)', [req.user.username, req.body?.old, req.body?.new]); return { ok: true }; }));
+  route('POST', '/api/me/password', 'viewer', async req => tx(req.user.username, async c => { assertPasswordPolicy(req.body?.new, req.user.username); await c.query('SELECT change_password($1,$2,$3)', [req.user.username, req.body?.old, req.body?.new]); return { ok: true }; }));
 
   // ---- PUBLIC storefront (no login). Read-only catalogue + checkout; rate limited; prices computed in PostgreSQL ----
   app.get('/shop/:slug', (req, reply) => reply.sendFile('shop.html'));
+  app.get('/t/:tenant/shop/:slug', (req, reply) => reply.sendFile('shop.html'));   // path-based multi-tenancy (no wildcard DNS): shop.js sends X-Tenant
   app.get('/api/public/store/:slug', async (req, reply) => {
     if (limited('g:' + req.ip, 120, 60000)) throw httpErr(429, 'too many requests');
     const { rows: [s] } = await q(`SELECT s.id, s.slug, s.name_ar, s.commerce_type, s.features, w.* FROM stores s JOIN store_site w ON w.store_id=s.id WHERE s.slug=$1 AND s.is_active AND w.is_published`, [req.params.slug]);
@@ -310,7 +384,9 @@ export function registerCommerce({ app, route, auth, q, tx, issueInvoice, httpEr
   app.post('/api/public/orders', async (req, reply) => {
     if (limited('o:' + req.ip, 10, 600000)) throw httpErr(429, 'too many orders, try later');
     const b = req.body || {};
-    const { rows: [r] } = await q('SELECT * FROM place_online_order($1,$2::jsonb,$3::jsonb,$4,$5)', [b.slug, JSON.stringify(b.customer || {}), JSON.stringify(b.lines || []), b.payment, b.notes]);
-    return { number: r.number, total: r.total };
+    return idempotent({ q, httpErr, req, reply, scope: 'order', fn: async () => {
+      const { rows: [r] } = await q('SELECT * FROM place_online_order($1,$2::jsonb,$3::jsonb,$4,$5)', [b.slug, JSON.stringify(b.customer || {}), JSON.stringify(b.lines || []), b.payment, b.notes]);
+      return { number: r.number, total: r.total };
+    } });
   });
 }

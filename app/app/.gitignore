@@ -1,0 +1,11 @@
+
+*.dump
+.env
+node_modules
+reports/.rows
+reports/api.pid
+reports/logs
+scratch/
+uploads/
+*.pem
+*.key

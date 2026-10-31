@@ -32,18 +32,24 @@ export function validateImage(buf, declaredMime) {
   return t;
 }
 
-export const isOwnUpload = url => typeof url === 'string' && OWN.test(url);
+// Multi-tenant: files live under <dir>/t/<tenant-slug>/products/ and are only ever deleted by the tenant whose slug is in the URL.
+// scope = null keeps the single-company layout exactly as before.
+const SLUG = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
+const scopedRe = scope => new RegExp('^/uploads/t/' + scope + '/products/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp)$');
+export const isOwnUpload = (url, scope = null) => typeof url === 'string' && (scope ? SLUG.test(scope) && scopedRe(scope).test(url) : OWN.test(url));
 
 /** Writes the image under <dir>/products/<uuid>.<ext> (flag wx: never overwrites) and returns the public path stored in products.image_url. */
-export async function saveProductImage(buf, dir) {
+export async function saveProductImage(buf, dir, scope = null) {
+  if (scope && !SLUG.test(scope)) throw Object.assign(new Error('invalid tenant scope'), { statusCode: 500 });
   const t = validateImage(buf); const name = `${randomUUID()}.${t.ext}`;
-  await mkdir(path.join(dir, 'products'), { recursive: true });
-  await writeFile(path.join(dir, 'products', name), buf, { flag: 'wx', mode: 0o644 });
-  return UPLOAD_URL_PREFIX + name;
+  const sub = scope ? path.join('t', scope, 'products') : 'products';
+  await mkdir(path.join(dir, sub), { recursive: true });
+  await writeFile(path.join(dir, sub, name), buf, { flag: 'wx', mode: 0o644 });
+  return (scope ? `/uploads/t/${scope}/products/` : UPLOAD_URL_PREFIX) + name;
 }
 
 /** Deletes a file this module created. Anything else (external URLs, other paths) is ignored. Never throws. */
-export async function removeUpload(url, dir) {
-  if (!isOwnUpload(url)) return false;
-  try { await unlink(path.join(dir, 'products', path.basename(url))); return true; } catch { return false; }
+export async function removeUpload(url, dir, scope = null) {
+  if (!isOwnUpload(url, scope)) return false;
+  try { await unlink(path.join(dir, ...(scope ? ['t', scope, 'products'] : ['products']), path.basename(url))); return true; } catch { return false; }
 }

@@ -1,7 +1,7 @@
 name: oklent-erpx          # its own compose project
 services:
   db:
-    image: postgres:16
+    image: postgres:16.10     # pinned minor line (REL-01): upgrade deliberately, after a backup + tests/migrate-test.sh
     environment:
       POSTGRES_USER: erpx_owner
       POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:-owner_dev_change_me}
@@ -27,20 +27,26 @@ services:
       DATABASE_URL: postgres://erpx_app:${APP_DB_PASSWORD:-erpx_app_dev}@db:5432/erpx
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
       NODE_ENV: ${NODE_ENV:-development}
+      MULTI_TENANT: ${MULTI_TENANT:-0}
+      TENANT_BASE_DOMAIN: ${TENANT_BASE_DOMAIN:-}
       UPLOAD_DIR: /app/uploads       # product images live on the erpx_uploads volume: they survive `docker compose down` and rebuilds
       TRUST_PROXY: "true"           # the api is reachable only through the web (nginx) service, which overwrites X-Forwarded-For
+      AI_LOCAL_ENABLED: ${AI_LOCAL_ENABLED:-true}
+      AI_MAX_INPUT_CHARS: ${AI_MAX_INPUT_CHARS:-6000}
     volumes:
       - erpx_uploads:/app/uploads
     expose: ["3100"]                # internal only: the public entry point is the web service below
-    healthcheck: { test: ["CMD-SHELL","wget -qO- http://127.0.0.1:3100/api/health >/dev/null || exit 1"], interval: 5s, timeout: 3s, retries: 20, start_period: 5s }
+    healthcheck: { test: ["CMD-SHELL","wget -qO- http://127.0.0.1:3100/api/readyz >/dev/null || exit 1"], interval: 5s, timeout: 3s, retries: 20, start_period: 5s }
   web:
     image: nginx:1.27-alpine        # serves web/ and forwards /api and /shop to api; index.html and sw.js are never cached
     depends_on: { api: { condition: service_healthy } }
     environment:
-      ERPX_WEB_CONF: "0.8.1"          # bump when deploy/nginx/*.conf changes: `up -d` then RECREATES this container (a bind-mounted file change alone does not, and nginx keeps the old config)
+      ERPX_WEB_CONF: "1.3.1"          # bump when deploy/nginx/*.conf changes: `up -d` then RECREATES this container (a bind-mounted file change alone does not, and nginx keeps the old config)
     volumes:
       - ./web:/usr/share/nginx/html:ro
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/erpx-common.conf:/etc/nginx/erpx-common.conf:ro
+      - ./deploy/nginx/erpx-locations.conf:/etc/nginx/erpx-locations.conf:ro
       - ./deploy/nginx/proxy.conf:/etc/nginx/erpx-proxy.conf:ro
       - ./deploy/nginx/security-headers.conf:/etc/nginx/erpx-security-headers.conf:ro
     ports: ["3100:80"]              # same public port as before: http://localhost:3100

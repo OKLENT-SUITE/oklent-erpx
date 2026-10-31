@@ -121,7 +121,9 @@ async function boot({ features = ['online_shop', 'delivery'], products = PRODUCT
   chk('«اطلب الخدمة» preselects that service in the booking box', $('#bk').value === '5' && /احجز موعد فني/.test($('#bkb').textContent));
   $('#bk').value = '6'; $('#bk').dispatchEvent(new w.Event('change')); chk('selecting a rental relabels the button', /احجز التأجير/.test($('#bkb').textContent));
   $('#bk').value = '5'; $('#bk').dispatchEvent(new w.Event('change')); click($('#bkb')); await tick(60);
-  chk('booking dialog opens with the chosen service selected and the region list loaded', $('#bdlg').hasAttribute('open') && $('#bs').value === '5' && $$('#br option').length === 2); }
+  chk('booking dialog opens with the chosen service selected and the region list loaded', $('#bdlg').hasAttribute('open') && $('#bs').value === '5' && $$('#br option').length === 2);
+  chk('1.1.0 booking dialog lists only in-stock products as optional add-ons (quantity 0 by default)', $$('#bdlg [data-addon]').length >= 1 && $$('#bdlg [data-addon]').every(i => i.value === '0') && $$('#bdlg [data-addon]').length === PRODUCTS.filter(p => p.kind === 'goods' && p.in_stock !== false && !(p.max_qty === 0)).length);
+  { const a1 = $('#bdlg [data-addon]'); $('#bdlg [data-act="ad-inc"]').click(); chk('1.1.0 add-on stepper increases the quantity and shows a summary', a1.value === '1' && /المنتجات المضافة/.test($('#adsum').textContent)); } }
 { const { $ } = await boot({ features: ['online_shop', 'booking'], products: PRODUCTS.filter(p => p.kind === 'goods') }); chk('no services/rentals -> those sections stay hidden', $('#sec-svc').hidden && $('#sec-book').hidden && $('#sn').innerHTML === ''); }
 { const { $ } = await boot({ features: ['online_shop', 'booking'], products: PRODUCTS.filter(p => p.kind === 'service') }); chk('only services (no goods): products section hidden, services + bookings shown', $('#sec-goods').hidden && !$('#sec-svc').hidden && !$('#sec-book').hidden); }
 // footer

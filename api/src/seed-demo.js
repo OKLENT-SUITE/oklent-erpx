@@ -1,6 +1,7 @@
 import { riyadhToday } from './dates.js';
 // Demo data: partners, property portfolio, leases, invoices, payments, expenses. Everything goes through the real engine.
 // Usage: API_URL=http://localhost:3100 ADMIN_PASSWORD=... node src/seed-demo.js
+if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'yes-i-understand') { console.error('seed-demo refuses to run with NODE_ENV=production: it writes fake customers, invoices and payments into the books.'); process.exit(1); }
 const API = process.env.API_URL || 'http://localhost:3100';
 let token;
 const call = async (m, p, body) => {

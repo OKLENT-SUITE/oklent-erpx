@@ -91,8 +91,8 @@
         <select id="so" aria-label="الترتيب"><option value="def">الترتيب الافتراضي</option><option value="pa">السعر: الأقل أولاً</option><option value="pd">السعر: الأعلى أولاً</option><option value="ds">الأعلى خصماً</option><option value="nm">الاسم (أ–ي)</option></select></div>
       <div class="grid" id="grid"></div><div style="text-align:center;margin:18px"><button class="btn ghost" id="more" hidden>عرض المزيد</button></div></section>
     <section id="sec-svc" hidden><h2 class="sec" id="services">الخدمات <small>صيانة وخدمات ما بعد البيع</small></h2><div class="grid" id="sgrid"></div></section>
-    <section id="sec-book" hidden><h2 class="sec" id="bookings">الحجوزات <small>احجز موعد فني أو تأجير</small></h2>
-      <div class="bookbox" id="bkbox"><div><b>احجز موعدك بسهولة</b><p class="vt" style="margin:4px 0 0">اختر الخدمة أو التأجير، ثم حدّد الموقع والموعد. يؤكد فريقنا الموعد ويُسند الفني.</p></div>
+    <section id="sec-book" hidden><h2 class="sec" id="bookings">طلب خدمة وحجز <small>موعد فني أو تأجير مع إمكانية إضافة منتجات</small></h2>
+      <div class="bookbox" id="bkbox"><div><b>احجز موعدك بسهولة</b><p class="vt" style="margin:4px 0 0">اختر الخدمة أو التأجير وأضف ما تحتاجه من منتجات، ثم حدّد الموقع والموعد. يؤكد فريقنا الموعد ويُسند الفني.</p></div>
         <label class="fl" style="min-width:240px;flex:1">الخدمة / التأجير<select id="bk">${bookable.map(p => `<option value="${p.id}">${esc(p.name_ar)} — ${money(p.price)} ر.س</option>`).join('')}</select></label><button class="btn" id="bkb" data-act="book-sel">احجز موعد فني</button></div>
       <div class="grid" id="rgrid"></div></section>
     ${site.about_ar ? `<h2 class="sec">عن المتجر</h2><p style="max-width:780px">${esc(site.about_ar)}</p>` : ''}
@@ -216,12 +216,22 @@
   const syncBook = () => { const p = byId.get(+$('#bk')?.value); const b = $('#bkb'); if (b && p) b.textContent = p.kind === 'rental' ? 'احجز التأجير' : 'احجز موعد فني'; };
   $('#bk')?.addEventListener('change', syncBook); syncBook();
   const fill = (el, items, ph) => { el.innerHTML = `<option value="">${ph}</option>` + items.map(i => `<option value="${esc(i.name_ar)}" data-id="${i.id}">${esc(i.name_ar)}</option>`).join(''); };
+  // ---- product add-ons of a service request: optional, in-stock goods only; the DATABASE re-checks stock and prices (place_booking, ERPX-K028) ----
+  const addonList = () => goods.filter(p => p.in_stock);
+  const addonsHtml = () => { const a = addonList(); if (!a.length) return '';
+    return `<div class="addons"><b>أضف منتجات إلى طلبك <small>(اختياري — بحد أقصى 9 أصناف)</small></b><div class="adl">${a.map(p => `<div class="ad"><span class="adn">${esc(p.name_ar)}<small>${money(p.price)} ر.س شامل الضريبة${p.max <= 5 ? ' · آخر ' + p.max + ' قطع' : ''}</small></span><span class="adq"><button type="button" class="ib sm" data-act="ad-dec" data-id="${p.id}" aria-label="إنقاص ${esc(p.name_ar)}">−</button><input class="n" type="number" inputmode="numeric" min="0" max="${p.max}" value="0" data-addon="${p.id}" aria-label="كمية ${esc(p.name_ar)}"><button type="button" class="ib sm" data-act="ad-inc" data-id="${p.id}" aria-label="زيادة ${esc(p.name_ar)}">+</button></span></div>`).join('')}</div><p class="vt" id="adsum" aria-live="polite"></p></div>`; };
+  const addonLines = () => [...document.querySelectorAll('#bdlg [data-addon]')].map(i => ({ product_id: +i.dataset.addon, qty: Math.min(Math.max(0, Math.floor(+i.value || 0)), +i.max || 99) })).filter(l => l.qty > 0);
+  const syncAddons = () => { const el = $('#adsum'); if (!el) return; const L = addonLines(); const tot = L.reduce((t, l) => t + (byId.get(l.product_id)?.price || 0) * l.qty, 0);
+    el.classList.toggle('err', L.length > 9);
+    el.textContent = L.length > 9 ? 'الحد الأقصى 9 أصناف من المنتجات في الطلب الواحد' : L.length ? `المنتجات المضافة: ${L.length} صنف — ${money(tot)} ر.س شامل الضريبة (تُحسب نهائياً عند التأكيد)` : ''; };
+  const stepAddon = (id, d) => { const i = document.querySelector(`#bdlg [data-addon="${id}"]`); if (!i) return; i.value = Math.min(+i.max || 99, Math.max(0, (+i.value || 0) + d)); syncAddons(); };
   async function openBooking(id) {
     if (!geo) { try { const g = await fetch('/api/public/geo'); if (!g.ok) throw 0; geo = window.__geo = await g.json(); } catch { toast('تعذّر تحميل المناطق والمدن، حاول مرة أخرى'); return; } }
     const ksa = n => new Date(Date.now() + 3 * 3600e3 + n * 86400e3).toISOString().slice(0, 10); const tm = []; for (let h = 8; h <= 20; h++) for (const m of ['00', '30']) { if (h === 20 && m === '30') { tm.push('20:30'); continue; } tm.push(String(h).padStart(2, '0') + ':' + m); }
     const d = $('#bdlg'); closeDlg($('#pdlg'));
-    d.innerHTML = `<div class="dh"><h3>حجز موعد / تأجير</h3><button class="ib" data-act="close-dlg" aria-label="إغلاق">${ic('x')}</button></div><div class="dbody"><div id="be"></div><div class="fg">
+    d.innerHTML = `<div class="dh"><h3>طلب خدمة / حجز</h3><button class="ib" data-act="close-dlg" aria-label="إغلاق">${ic('x')}</button></div><div class="dbody"><div id="be"></div><div class="fg">
       <div class="f2"><label class="fl">الخدمة<select id="bs">${bookable.map(p => `<option value="${p.id}" ${p.id === id ? 'selected' : ''}>${esc(p.name_ar)} — ${money(p.price)} ر.س</option>`).join('')}</select></label><label class="fl">العدد / الأيام<input id="bq" type="number" min="1" max="60" value="1"></label></div>
+      ${addonsHtml()}
       <div class="f2"><label class="fl">المنطقة الإدارية<select id="br"></select></label><label class="fl">المدينة<select id="bc"></select></label></div>
       <div class="f2"><label class="fl">الحي<select id="bd"></select></label><label class="fl">الشارع<input id="bst"></label></div>
       <div class="f2"><label class="fl">رقم المبنى<input id="bbn" inputmode="numeric"></label><label class="fl">الرمز البريدي<input id="bpc" inputmode="numeric"></label></div>
@@ -233,11 +243,13 @@
     fill($('#br'), geo.regions, 'اختر المنطقة'); fill($('#bc'), [], 'اختر المدينة'); fill($('#bd'), [], 'اختر الحي');
     $('#br').onchange = e => { const rid = +e.target.selectedOptions[0]?.dataset.id; fill($('#bc'), geo.cities.filter(c => c.region_id === rid), 'اختر المدينة'); fill($('#bd'), [], 'اختر الحي'); };
     $('#bc').onchange = e => { const cid = +e.target.selectedOptions[0]?.dataset.id; fill($('#bd'), geo.districts.filter(x => x.city_id === cid), 'اختر الحي'); };
+    d.querySelectorAll('[data-addon]').forEach(i => i.addEventListener('input', syncAddons));
     d.showModal();
   }
   async function submitBooking() {
     const btn = $('#bsub'), E = $('#be'); btn.disabled = true; E.innerHTML = ''; const v = id => $(id).value; const phone = digits(v('#bph'));
-    let res; try { res = await fetch('/api/public/bookings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: store.slug, customer: { name: v('#bnm'), phone, region: v('#br'), city: v('#bc'), district: v('#bd'), street: v('#bst'), building_no: v('#bbn'), postal_code: v('#bpc'), address_notes: v('#ban'), notes: v('#bnt') }, when: { date: v('#bdt'), time: v('#btm') }, lines: [{ product_id: +v('#bs'), qty: +v('#bq') }] }) }); }
+    const extra = addonLines(); if (extra.length > 9) { E.innerHTML = '<div class="msg err" role="alert">الحد الأقصى 9 أصناف من المنتجات في الطلب الواحد</div>'; btn.disabled = false; return; }
+    let res; try { res = await fetch('/api/public/bookings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: store.slug, customer: { name: v('#bnm'), phone, region: v('#br'), city: v('#bc'), district: v('#bd'), street: v('#bst'), building_no: v('#bbn'), postal_code: v('#bpc'), address_notes: v('#ban'), notes: v('#bnt') }, when: { date: v('#bdt'), time: v('#btm') }, lines: [{ product_id: +v('#bs'), qty: +v('#bq') }, ...extra] }) }); }
     catch { E.innerHTML = '<div class="msg err" role="alert">تعذّر الاتصال بالخادم، حاول مرة أخرى</div>'; btn.disabled = false; return; }
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { E.innerHTML = `<div class="msg err" role="alert">${esc(res.status === 429 ? 'محاولات كثيرة، حاول بعد قليل' : (j.error || 'تعذّر إرسال الحجز').replace(/^ERPX-[A-Z]\d+:\s*/, ''))}</div>`; btn.disabled = false; return; }
@@ -258,6 +270,7 @@
       case 'reset': Object.assign(S, { q: '', cat: 'all', stock: false, off: false, wish: false, shown: 24 }); $('#q').value = ''; $('#st').checked = $('#of').checked = false; drawChips(); drawList(); break;
       case 'pick-svc': { closeDlg($('#pdlg')); const sel = $('#bk'); if (sel) { sel.value = String(id); syncBook(); } const sec = document.getElementById('bookings'); sec?.scrollIntoView({ behavior: 'smooth' }); const bx = $('#bkbox'); bx?.classList.add('flash'); setTimeout(() => bx?.classList.remove('flash'), 1600); break; }
       case 'book-sel': openBooking(+$('#bk').value); break;
+      case 'ad-inc': stepAddon(id, 1); break; case 'ad-dec': stepAddon(id, -1); break;
     }
   });
   $('#cb').onclick = openCart; $('#barb').onclick = openCart; $('#ov').onclick = closeCart;

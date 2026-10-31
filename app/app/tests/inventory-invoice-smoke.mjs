@@ -1,0 +1,37 @@
+// 1.3.0 API checks: moving-average costing, receipts with date/VAT/vendor, COGS on invoice, rental period, backdated invoices. Usage: node tests/inventory-invoice-smoke.mjs (running API)
+const API=process.env.API_URL||'http://localhost:3100'; let tk; let fails=0;
+const call=async(m,p,b)=>{const r=await fetch(API+p,{method:m,headers:{'content-type':'application/json',...(tk&&{authorization:'Bearer '+tk})},body:m==='GET'?undefined:JSON.stringify(b??{})});return{status:r.status,body:await r.json().catch(()=>({}))}};
+const ck=(n,ok,x='')=>{if(!ok)fails++;console.log(ok?'PASS':'FAIL',n,ok?'':x)};
+tk=(await call('POST','/api/auth/login',{username:'admin',password:process.env.ADMIN_PASSWORD||'ChangeMe!2026'})).body.token;
+const st=(await call('GET','/api/stores')).body[0];
+const T=Date.now();
+const g=(await call('POST','/api/products',{sku:'E2E-'+T,name_ar:'صنف اختبار',sale_price:'100',published:true,stock_tracked:true,opening_qty:0})).body;
+const rent=(await call('POST','/api/products',{sku:'R-'+T,name_ar:'تأجير اختبار',kind:'rental',sale_price:'400'})).body;
+const v=(await call('POST','/api/partners',{kind:'vendor',name_ar:'مورد '+T})).body;
+let r=await call('POST','/api/stock/receive',{product_id:g.id,store_id:st.id,qty:10,unit_cost:'50',vat_rate:15,mode:'credit',vendor_id:v.id,ref:'S'+T,date:'2026-10-01'});
+ck('receipt credit w/ date',r.status===200&&r.body.entry_id,JSON.stringify(r.body));
+r=await call('POST','/api/stock/receive',{product_id:g.id,store_id:st.id,qty:10,unit_cost:'70',mode:'cash'});
+ck('receipt cash avg=60',r.status===200&&Number(r.body.avg_cost)===60,JSON.stringify(r.body));
+r=await call('POST','/api/stock/receive',{product_id:g.id,store_id:st.id,qty:1,unit_cost:'5',mode:'cash',date:'2999-01-01'});
+ck('future receipt refused',r.status===422,JSON.stringify(r.body));
+// invoice with product + backdated date
+r=await call('POST','/api/invoices',{kind:'simplified',branch:'RYD',store_id:st.id,invoice_date:'2026-10-05',lines:[{product_id:g.id,qty:5}]});
+ck('invoice product line + date, COGS 300',r.status===200&&Number(r.body.cogs)===300&&r.body.invoice_date==='2026-10-05',JSON.stringify(r.body));
+const list=(await call('GET','/api/invoices?limit=5')).body; ck('list issue_date',list[0].issue_date==='2026-10-05',JSON.stringify(list[0]));
+r=await call('POST','/api/invoices',{kind:'simplified',branch:'RYD',lines:[{product_id:g.id,qty:999}]});
+ck('oversell refused, invoice rolled back',r.status===422&&/K001/.test(r.body.error||''),JSON.stringify(r.body));
+r=await call('POST','/api/invoices',{kind:'simplified',branch:'RYD',invoice_date:'2999-01-01',lines:[{description:'x',qty:1,unit_price:10,tax_code:'S15',revenue_account:'4200'}]});
+ck('future invoice date refused',r.status===422,JSON.stringify(r.body));
+r=await call('POST','/api/invoices',{kind:'simplified',branch:'RYD',lines:[{product_id:rent.id,qty:1}]});
+ck('rental without period refused',r.status===422&&/E021/.test(r.body.error||''),JSON.stringify(r.body));
+r=await call('POST','/api/invoices',{kind:'simplified',branch:'RYD',lines:[{product_id:rent.id,qty:3,period_from:'2026-10-10',period_to:'2026-10-12'}]});
+ck('rental with period ok',r.status===200,JSON.stringify(r.body));
+const x=await fetch(API+'/api/invoices/'+r.body.id+'/xml',{headers:{authorization:'Bearer '+tk}}).then(a=>a.text()); ck('XML has InvoicePeriod',/<cbc:StartDate>2026-10-10/.test(x));
+const pr=await fetch(API+'/api/invoices/'+r.body.id+'/print',{headers:{authorization:'Bearer '+tk}}).then(a=>a.text()); ck('print shows period',/2026-10-12/.test(pr));
+const sm=(await call('GET','/api/stock/summary')).body; ck('summary',sm.items>0&&sm.total_value!==undefined,JSON.stringify(sm));
+const mv=(await call('GET','/api/stock/moves?product_id='+g.id)).body; ck('moves have date/cost/entry',mv.some(m=>m.kind==='sale'&&m.entry_no&&Number(m.unit_cost)===60),JSON.stringify(mv[0]));
+const pos=await call('POST','/api/stock/post-opening',{equity_account:'3100'}); ck('opening valuation posts',pos.status===200||/K049/.test(pos.body.error||''),JSON.stringify(pos.body));
+const tb=(await call('GET','/api/reports/trial-balance?from=2026-01-01&to=2026-12-31')).body;
+const dr=tb.reduce((s,r)=>s+Number(r.closing_debit),0),cr=tb.reduce((s,r)=>s+Number(r.closing_credit),0); ck('TB balanced '+dr+'='+cr,Math.abs(dr-cr)<.005);
+ck('chain verifies',(await call('GET','/api/reports/chain-verify')).body.ok===true);
+console.log('fails',fails);

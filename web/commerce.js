@@ -7,6 +7,9 @@ export function installCommerce(VIEWS, X) {
   const st = s => tag(...(ST[s] || ['asset', s]));
   const PAY = { cod: 'الدفع عند الاستلام', bank_transfer: 'حوالة بنكية', mada: 'مدى', card: 'بطاقة' };
   const printInvoice = async id => { const r = await fetch(`/api/invoices/${id}/print`, { headers: { authorization: 'Bearer ' + X.token() } }); const w = open('', '_blank'); w.document.write(await r.text()); w.document.close(); setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 400); };
+  // compact modern stat cards (icon chip + label + value); colours: teal / violet / amber / blue / green / coral
+  const stat = (cls, ic, label, value, unit = '') => `<div class="stat s-${cls}"><span class="si">${X.icon ? X.icon(ic, 17) : ''}</span><span class="sx"><span class="sl">${label}</span><b class="sv n">${value}${unit ? `<small> ${unit}</small>` : ''}</b></span></div>`;
+  const stockStats = (t, extra = '') => `<div class="stat-strip">${stat('teal', 'tag', 'أصناف متتبَّعة', t.items)}${stat('blue', 'boxes', 'إجمالي الكميات بالمخزون', Number(t.total_qty).toLocaleString('en-US'))}${stat('green', 'coins', 'إجمالي قيمة المخزون (متوسط التكلفة)', money(t.total_value), 'ر.س')}${stat('amber', 'clock', 'منخفض (5 أو أقل)', t.low_stock)}${stat('violet', 'lock', 'نفد المتاح', t.out_of_stock)}${extra}</div>`;
   const tabs = (m, items, cur, go) => { m.querySelector('.tabs').innerHTML = items.map(([k, l]) => `<button data-t="${k}" class="${k === cur ? 'on' : ''}">${l}</button>`).join(''); m.querySelectorAll('.tabs button').forEach(b => b.onclick = () => go(b.dataset.t)); };
   const planned = (title, sub, items) => async m => { m.innerHTML = head(title, sub) + `<div class="card planned"><b>⚠ هذه الشاشة مخطَّطة وغير مفعّلة بعد</b><p>تتطلب محرك مخزون كاملاً (حركات مخزنية، تقييم FIFO/AVCO/التكلفة المعيارية، ربط مع قيود تكلفة البضاعة 5100 والمخزون 1140). لن أعرض أرقاماً وهمية.</p>
     <b>النطاق المخطَّط:</b><ul>${items.map(i => `<li>${i}</li>`).join('')}</ul><p class="sub">المبدأ: لا حركة مخزون بلا أثر محاسبي قابل للتتبع، والمخزون يُقاس بالحركات لا بحقل رصيد قابل للتعديل.</p></div>`; done(m); };
@@ -43,26 +46,32 @@ export function installCommerce(VIEWS, X) {
   }
 
   // ================= المنتجات والعروض =================
-  VIEWS.products = async function (m, tab = 'products') {
+  // المنتجات (في المخزون) والعروض (في المبيعات) شاشتان منفصلتان تتشاركان نفس المنشئ ومعرّفات DOM
+  const catalog = async (m, tab) => {
     const [prods, offers, tc] = await Promise.all([api('/products'), api('/offers'), api('/tax-codes')]); const ed = can('admin', 'accountant');
-    m.innerHTML = head('المنتجات والعروض', 'السعر بدون ضريبة. الخصم والضريبة يُحسبان في قاعدة البيانات لا في المتصفح.', '<button class="btn" id="pr-prods">🖨️ طباعة المنتجات</button>') + '<div class="tabs"></div><div id="prod-edit-box"></div><div id="tb"></div>';
+    const sum = tab === 'products' ? await api('/stock/summary').catch(() => null) : null;
+    const unvalued = tab === 'products' && ed ? await api('/stock/unvalued').catch(() => []) : [];
+    m.innerHTML = (tab === 'offers' ? head('العروض والخصومات', 'خصم بنسبة أو بمبلغ ثابت على منتج محدد أو على كل المنتجات. الخصم والضريبة يُحسبان في قاعدة البيانات لا في المتصفح. المنتجات نفسها في المخزون ← المنتجات والأصناف.')
+      : head('المنتجات والأصناف', 'قائمة الأصناف والخدمات وأسعارها وصورها وتتبّع مخزونها. السعر الظاهر سعر البيع؛ متوسط تكلفة المخزون يُراجع من أرصدة المخزون. العروض والخصومات في المبيعات ← العروض والخصومات.', '<button class="btn" id="pr-prods">🖨️ طباعة المنتجات</button>')) + '<div id="prod-edit-box"></div>' + (sum && sum.items !== undefined ? stockStats(sum) : '') + (unvalued.length ? `<div class="card geo-note noprint"><b>قيمة المخزون غير مكتملة</b><div>يوجد ${unvalued.length} صنفاً برصيد موجب دون متوسط تكلفة موثّق. أسعار البيع في هذه القائمة لا تُستخدم كتكلِفة للمخزون. أدخل تكلفة الشراء من مستندها في شاشة أرصدة المخزون لاستكمال التقييم.</div><button class="btn teal sm" id="open-stock-valuation">مراجعة تكلفة المخزون (${unvalued.length})</button></div>` : '') + '<div id="tb"></div>';
+    $('#open-stock-valuation')?.addEventListener('click', () => X.go('stock'));
     if ($('#pr-prods')) $('#pr-prods').onclick = () => printDoc('دليل المنتجات والخدمات والأسعار', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'اسم المنتج' }, { k: 'category', t: 'التصنيف' }, { ...num('sale_price'), t: 'السعر بدون ضريبة' }, { t: 'النوع', f: r => ({ goods: 'بضاعة', service: 'خدمة', rental: 'تأجير' })[r.kind] }, { t: 'المخزون', f: r => r.stock_tracked ? 'متتبَّع' : 'غير متتبَّع' }], prods), { subtitle: 'قائمة الأصناف والأسعار المعتمدة' });
-    const draw = t => { tabs(m, [['products', 'المنتجات والخدمات'], ['offers', 'العروض والخصومات']], t, draw);
+    const draw = t => {
       $('#tb').innerHTML = t === 'products' ? `<div class="card">${table([{ t: 'الصورة', f: r => thumb(r.image_url) }, { k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'الاسم' }, { t: 'النوع', f: r => ({ goods: 'بضاعة', service: 'خدمة', rental: 'تأجير' })[r.kind] }, { k: 'category', t: 'التصنيف' }, { ...num('sale_price'), t: 'السعر بدون ضريبة' }, { ...num('unit_discount'), t: 'الخصم الساري' },
           { t: 'الإيراد', f: r => r.revenue_account }, { t: 'المخزون', f: r => r.kind !== 'goods' ? '—' : r.stock_tracked ? tag('open', 'متتبَّع') : tag('closed', 'غير متتبَّع') }, { t: 'في المتجر', f: r => r.published ? tag('open', 'منشور') : tag('closed', 'مخفي') },
           { t: '', f: r => ed ? `<span class="noprint"><button class="btn ghost sm" data-ed-prod="${r.id}">تعديل</button> <button class="btn ghost sm" data-pub="${r.id}" data-v="${r.published}">${r.published ? 'إخفاء' : 'نشر'}</button> <button class="btn ghost sm" data-img="${r.id}">الصورة</button> <button class="btn ghost sm" data-pr="${r.id}">السعر</button>${r.kind === 'goods' && !r.stock_tracked ? ` <button class="btn teal sm" data-tr="${r.id}">تتبّع المخزون</button>` : ''}</span>` : '' }], prods)}</div>
         ${ed ? `<div class="card noprint"><b>منتج / خدمة جديدة</b><div class="row"><label>الرمز SKU<input id="ps"></label><label style="flex:2">الاسم<input id="pn"></label><label>النوع<select id="pk"><option value="goods">بضاعة (مبيعات الألعاب 4200)</option><option value="rental">تأجير (4100)</option><option value="service">خدمة / صيانة (4300)</option></select></label>
           <label>التصنيف<input id="pc"></label><label>السعر بدون ضريبة<input id="pp" type="number" step="0.01"></label><label>الضريبة<select id="pt">${tc.map(x => `<option value="${x.code}">${esc(x.name_ar)}</option>`).join('')}</select></label>
-          <label>تتبّع المخزون (بضاعة فقط)<select id="pst"><option value="0">لا</option><option value="1">نعم</option></select></label><label>الكمية الافتتاحية<input id="pq" type="number" min="0" step="1" value="0"></label>
+          <label>تتبّع المخزون (بضاعة فقط)<select id="pst"><option value="0">لا</option><option value="1">نعم</option></select></label><label>تكلفة الوحدة (للافتتاحي)<input id="pcost" type="number" min="0" step="0.01" value="0"></label><label>الكمية الافتتاحية<input id="pq" type="number" min="0" step="1" value="0"></label>
           <button class="btn teal" id="pa">إضافة</button></div>
           <div class="imgpick"><div class="imgprev" id="pip">🖼</div><div><input type="file" id="pif" accept="image/jpeg,image/png,image/webp" hidden><button type="button" class="btn ghost sm" id="pib">اختيار صورة من الجهاز</button> <button type="button" class="btn ghost sm" id="pix" hidden>إزالة</button><div class="sub" id="pim">JPG / PNG / WebP — حتى 2 ميجابايت</div><label style="margin-top:6px">أو رابط صورة خارجي (https) — اختياري<input id="pi" placeholder="https://…"></label></div></div></div>` : ''}` :
         `<div class="card">${table([{ k: 'code', t: 'الرمز' }, { k: 'name_ar', t: 'العرض' }, { t: 'المنتج', f: r => esc(r.product || 'كل المنتجات') }, { t: 'الخصم', f: r => r.discount_type === 'percent' ? r.value + '%' : money(r.value) + ' ر.س' }, { k: 'start_date', t: 'من' }, { k: 'end_date', t: 'إلى' },
           { t: 'الحالة', f: r => r.is_active ? tag('open', 'مفعّل') : tag('locked', 'موقوف') }, { t: '', f: r => ed ? `<button class="btn ghost sm noprint" data-of="${r.id}" data-a="${r.is_active}">${r.is_active ? 'إيقاف' : 'تفعيل'}</button>` : '' }], offers)}</div>
         ${ed ? `<div class="card noprint"><b>عرض جديد</b><div class="row"><label>الرمز<input id="oc"></label><label style="flex:2">الاسم<input id="on"></label><label>المنتج<select id="op"><option value="">كل المنتجات</option>${prods.map(p => `<option value="${p.id}">${esc(p.name_ar)}</option>`).join('')}</select></label>
           <label>النوع<select id="ot"><option value="percent">نسبة %</option><option value="amount">مبلغ ثابت للوحدة</option></select></label><label>القيمة<input id="ov" type="number" step="0.01"></label><label>من<input id="os" type="date" value="${today()}"></label><label>إلى<input id="oe" type="date"></label><button class="btn teal" id="oa">إضافة</button></div></div>` : ''}`;
-      const reload = () => VIEWS.products(m, t);
+      { const nf = $('#tb > .card.noprint'); if (t === 'products' && nf) m.insertBefore(nf, $('#tb')); }   // «منتج / خدمة جديدة» في أعلى الصفحة
+      const reload = () => VIEWS[t === 'offers' ? 'offers' : 'products'](m);
       const pick = $('#pif') ? imagePicker(m, { input: $('#pif'), preview: $('#pip'), msg: $('#pim'), clearBtn: $('#pix'), pick: $('#pib') }) : null;
-      $('#pa')?.addEventListener('click', guard(async () => { const file = pick?.file(); const created = await api('/products', { method: 'POST', body: { sku: $('#ps').value, name_ar: $('#pn').value, kind: $('#pk').value, category: $('#pc').value, sale_price: $('#pp').value, tax_code: $('#pt').value, image_url: file ? undefined : ($('#pi').value || undefined), stock_tracked: $('#pk').value === 'goods' && $('#pst').value === '1', opening_qty: $('#pq').value || 0 } });
+      $('#pa')?.addEventListener('click', guard(async () => { const file = pick?.file(); const created = await api('/products', { method: 'POST', body: { sku: $('#ps').value, name_ar: $('#pn').value, kind: $('#pk').value, category: $('#pc').value, sale_price: $('#pp').value, tax_code: $('#pt').value, image_url: file ? undefined : ($('#pi').value || undefined), stock_tracked: $('#pk').value === 'goods' && $('#pst').value === '1', opening_qty: $('#pq').value || 0, cost_price: $('#pcost').value || 0 } });
         if (file) { try { await uploadImage(created.id, file); } catch (e) { toast('أُضيف المنتج لكن تعذّر رفع الصورة: ' + e.message + ' — ارفعها من زر «الصورة» في الجدول', false); reload(); return; } }
         toast('تمت الإضافة'); reload(); }));
       m.querySelectorAll('[data-img]').forEach(b => b.onclick = () => imageDialog(prods.find(x => x.id === +b.dataset.img), reload));
@@ -103,6 +112,8 @@ export function installCommerce(VIEWS, X) {
     };
     draw(tab); done(m);
   };
+  VIEWS.products = m => catalog(m, 'products');
+  VIEWS.offers = m => catalog(m, 'offers');
 
   // ================= الحوالات =================
   VIEWS.transfers = async function (m) {
@@ -129,7 +140,22 @@ export function installCommerce(VIEWS, X) {
         { t: '', f: r => `<span class="noprint"><button class="btn ghost sm" data-d="${r.id}">تفاصيل</button> ${cs && r.status === 'new' ? `<button class="btn sm" data-s="confirmed" data-i="${r.id}">تأكيد</button>` : ''}${cs && r.status === 'confirmed' ? `<button class="btn teal sm" data-s="fulfilled" data-i="${r.id}">تسليم</button>` : ''}${cs && ['new', 'confirmed'].includes(r.status) && !r.invoice_id ? `<button class="btn coral sm" data-s="cancelled" data-i="${r.id}">إلغاء</button>` : ''}${ed && !r.invoice_id && r.status !== 'cancelled' ? `<button class="btn amber sm" data-f="${r.id}">فوترة</button>` : ''}</span>` }], orders)}</div><div id="od"></div>`;
     $('#pr-orders').onclick = () => printDoc('سجل طلبات المتجر الإلكتروني', table([{ k: 'number', t: 'الطلب' }, { t: 'التاريخ', f: r => r.created_at.slice(0, 10) }, { k: 'customer_name', t: 'العميل' }, { k: 'phone', t: 'الجوال' }, { k: 'city', t: 'المدينة' }, { t: 'الدفع', f: r => PAY[r.payment_method] || r.payment_method }, num('total', 'المبلغ'), { t: 'الحالة', f: r => (ST[r.status] ? ST[r.status][1] : r.status) }, { k: 'invoice_no', t: 'الفاتورة' }], orders), { subtitle: 'سجل طلبات ومبيعات المتجر الإلكتروني' });
     m.querySelectorAll('[data-s]').forEach(b => b.onclick = guard(async () => { await api(`/orders/${b.dataset.i}/status`, { method: 'POST', body: { status: b.dataset.s } }); VIEWS.orders(m); }));
-    m.querySelectorAll('[data-f]').forEach(b => b.onclick = guard(async () => { const r = await api(`/orders/${b.dataset.f}/invoice`, { method: 'POST' }); toast('صدرت الفاتورة ' + r.number); VIEWS.orders(m); }));
+    m.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const r = await api(`/orders/${b.dataset.f}/invoice`, { method: 'POST' });
+        toast('صدرت الفاتورة ' + r.number); VIEWS.orders(m);
+      } catch (e) {
+        const shortage = String(e.message || '').match(/ERPX-K001: insufficient available stock for (.+?) \(on hand ([\d.]+), reserved by online orders ([\d.]+), requested ([\d.]+)\)/i);
+        if (shortage) {
+          const [, sku, onHandText, reservedText, requestedText] = shortage;
+          const onHand = Number(onHandText), reserved = Number(reservedText), requested = Number(requestedText);
+          const needed = Math.max(0, reserved + requested - onHand);
+          toast('تعذّر إصدار الفاتورة: المخزون غير كافٍ', false,
+            `الصنف ${sku}: بالمخزون ${onHand}، ومحجوز لطلبات أخرى ${reserved}، وكمية هذه الفاتورة ${requested}. يلزم توفير ${needed} وحدة لتغطية الطلبات الحالية. سجّل استلاماً فعلياً للمخزون أو عالج الحجوزات القائمة، ثم أعد المحاولة. لم تُصدر الفاتورة ولم تتغير الكميات.`);
+        } else toast('تعذّر إصدار الفاتورة', false, e.message || 'حدث خطأ غير معروف');
+      } finally { b.disabled = false; }
+    });
     m.querySelectorAll('[data-d]').forEach(b => b.onclick = guard(async () => { const o = await api('/orders/' + b.dataset.d);
       $('#od').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><b>تفاصيل الطلب: ${esc(o.number)}</b><button class="btn sm noprint" id="pr-ord-slip">🖨️ طباعة إشعار / بوليصة الطلب</button></div>
         <p><b>العميل:</b> ${esc(o.customer_name)} (${esc(o.phone || '')}) · <b>العنوان:</b> ${esc(o.city || '')} - ${esc(o.address || '')} ${o.notes ? '· <b>ملاحظات:</b> ' + esc(o.notes) : ''}</p>
@@ -181,13 +207,17 @@ export function installCommerce(VIEWS, X) {
 
   // ================= الفواتير والمبيعات (تقارير) =================
   VIEWS.salesrep = async function (m) {
-    m.innerHTML = head('تقارير المبيعات', 'صافي المبيعات بعد إشعارات الدائن — تقرير تحليلي للقراءة فقط؛ لإصدار فاتورة أو قبض استخدم «الفواتير والتحصيل»', '<button class="btn" id="pr">طباعة / PDF</button> <button class="btn ghost" id="cv">CSV</button>') +
+    m.innerHTML = head('تقارير المبيعات', 'ملخص المبيعات وتفاصيل الفواتير بعد احتساب الإشعارات الدائنة', '<button class="btn" id="pr">طباعة / PDF</button> <button class="btn ghost" id="cv-summary">CSV الملخص</button> <button class="btn ghost" id="cv-details">CSV الفواتير</button>') +
       `<div class="card noprint"><div class="row"><label>التجميع<select id="g"><option value="month">الشهر</option><option value="branch">الفرع</option><option value="segment">النشاط (إيجار/ألعاب/صيانة)</option><option value="customer">العميل</option></select></label><label>من<input type="date" id="f" value="${today().slice(0, 4)}-01-01"></label><label>إلى<input type="date" id="t" value="${today()}"></label><button class="btn teal" id="go">عرض</button></div></div><div class="card" id="o"></div>`;
-    let rows = []; const go = guard(async () => { rows = await api(`/reports/sales?group=${$('#g').value}&from=${$('#f').value}&to=${$('#t').value}`); const mx = Math.max(1, ...rows.map(r => +r.net)); const tn = rows.reduce((s, r) => s + +r.net, 0), tv = rows.reduce((s, r) => s + +r.vat, 0);
-      $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المبيعات</b> ${$('#f').value} → ${$('#t').value}</div>` + table([{ k: 'k', t: 'البند' }, { k: 'invoices', t: 'عدد الفواتير' }, num('net'), num('vat'), { t: '', f: r => `<div style="background:var(--teal);height:10px;border-radius:5px;width:${Math.max(2, +r.net / mx * 100)}%"></div>` }], rows).replace('</tbody>', `<tr class="tot"><td colspan="2">الإجمالي</td><td class="num">${money(tn)}</td><td class="num">${money(tv)}</td><td></td></tr></tbody>`); });
+    let rows = [], detailRows = []; const go = guard(async () => { const q = `from=${$('#f').value}&to=${$('#t').value}`; [rows, detailRows] = await Promise.all([api(`/reports/sales?group=${$('#g').value}&${q}`), api(`/reports/sales/details?${q}`)]); rows = rows.map(r => ({ ...r, total: +r.net + +r.vat })); const mx = Math.max(1, ...rows.map(r => +r.net)); const sum = k => rows.reduce((s, r) => s + +r[k], 0); const detailSum = k => detailRows.reduce((s, r) => s + +r[k], 0);
+      const kindName = {standard:'ضريبية',simplified:'مبسطة',credit:'إشعار دائن',debit:'إشعار مدين'};
+      const summary = table([{ k: 'k', t: 'البند' }, { k: 'invoices', t: 'عدد الفواتير' }, num('net'), num('vat'), num('total', 'الإجمالي شامل الضريبة'), { t: 'مؤشر', f: r => `<div style="background:var(--teal);height:10px;border-radius:5px;width:${Math.max(2, +r.net / mx * 100)}%"></div>` }], rows).replace('</tbody>', `<tr class="tot"><td>الإجمالي</td><td class="num">${detailRows.length}</td><td class="num">${money(sum('net'))}</td><td class="num">${money(sum('vat'))}</td><td class="num">${money(sum('total'))}</td><td></td></tr></tbody>`);
+      const details = `<h3>تفاصيل الفواتير</h3>` + table([{ k: 'invoice_no', t: 'رقم الفاتورة' }, { k: 'issue_date', t: 'التاريخ' }, { t: 'النوع', f: r => esc(kindName[r.kind] || r.kind || '—') }, { k: 'customer', t: 'العميل' }, { k: 'branch', t: 'الفرع' }, num('net'), num('vat'), num('total')], detailRows).replace('</tbody>', `<tr class="tot"><td>الإجمالي (${detailRows.length} فاتورة)</td><td colspan="4"></td><td class="num">${money(detailSum('net'))}</td><td class="num">${money(detailSum('vat'))}</td><td class="num">${money(detailSum('total'))}</td></tr></tbody>`);
+      $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المبيعات</b> ${$('#f').value} → ${$('#t').value}</div><h3>ملخص المبيعات حسب ${$('#g').selectedOptions[0].text}</h3>${summary}${details}`; });
     $('#go').onclick = go; $('#g').onchange = go;
     $('#pr').onclick = () => printDoc('تقرير المبيعات والتحليلات', $('#o').innerHTML, { subtitle: `من ${$('#f').value} إلى ${$('#t').value}` });
-    $('#cv').onclick = () => rows.length && csv('sales-' + $('#g').value, rows); go(); done(m);
+    $('#cv-summary').onclick = () => rows.length && csv('sales-summary-' + $('#g').value, rows);
+    $('#cv-details').onclick = () => detailRows.length && csv('sales-invoices', detailRows); go(); done(m);
   };
 
   // ================= المصروفات والإيرادات =================
@@ -281,13 +311,16 @@ export function installCommerce(VIEWS, X) {
     m.querySelectorAll('[data-n]').forEach(b => b.onclick = guard(async () => { const a = prompt('مبلغ السداد (المتبقي ' + b.dataset.o + '):', b.dataset.o); if (!a) return; const bill = bills.find(x => x.number === b.dataset.n); await api(`/bills/${bill.id}/payments`, { method: 'POST', body: { amount: a, cash_account: '1121', method: 'bank' } }); toast('تم السداد'); VIEWS.apay(m); })); done(m);
   };
   VIEWS.purchrep = async function (m) {
-    m.innerHTML = head('تقارير المشتريات', 'إجمالي فواتير الموردين وضريبة المدخلات', '<button class="btn" id="pr">طباعة / PDF</button> <button class="btn ghost" id="cv">CSV</button>') +
+    m.innerHTML = head('تقارير المشتريات', 'ملخص فواتير الموردين وتفاصيلها وضريبة المدخلات', '<button class="btn" id="pr">طباعة / PDF</button> <button class="btn ghost" id="cv-summary">CSV الملخص</button> <button class="btn ghost" id="cv-details">CSV الفواتير</button>') +
       `<div class="card noprint"><div class="row"><label>التجميع<select id="g"><option value="month">الشهر</option><option value="vendor">المورد</option><option value="branch">الفرع</option><option value="account">نوع المشتريات (الحساب)</option></select></label><label>من<input type="date" id="f" value="${today().slice(0, 4)}-01-01"></label><label>إلى<input type="date" id="t" value="${today()}"></label><button class="btn teal" id="go">عرض</button></div></div><div class="card" id="o"></div>`;
-    let rows = []; const go = guard(async () => { rows = await api(`/reports/purchases?group=${$('#g').value}&from=${$('#f').value}&to=${$('#t').value}`); const sum = k => rows.reduce((s, r) => s + +r[k], 0);
-      $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المشتريات</b> ${$('#f').value} → ${$('#t').value}</div>` + table([{ k: 'k', t: 'البند' }, { k: 'bills', t: 'عدد الفواتير' }, num('net'), num('vat'), num('total')], rows).replace('</tbody>', `<tr class="tot"><td colspan="2">الإجمالي</td><td class="num">${money(sum('net'))}</td><td class="num">${money(sum('vat'))}</td><td class="num">${money(sum('total'))}</td></tr></tbody>`); });
+    let rows = [], detailRows = []; const go = guard(async () => { const q = `from=${$('#f').value}&to=${$('#t').value}`; [rows, detailRows] = await Promise.all([api(`/reports/purchases?group=${$('#g').value}&${q}`), api(`/reports/purchases/details?${q}`)]); const sum = (list, k) => list.reduce((s, r) => s + +r[k], 0);
+      const summary = table([{ k: 'k', t: 'البند' }, { k: 'bills', t: 'عدد الفواتير' }, num('net'), num('vat'), num('total')], rows).replace('</tbody>', `<tr class="tot"><td>الإجمالي</td><td class="num">${sum(rows,'bills')}</td><td class="num">${money(sum(rows,'net'))}</td><td class="num">${money(sum(rows,'vat'))}</td><td class="num">${money(sum(rows,'total'))}</td></tr></tbody>`);
+      const details = `<h3>تفاصيل فواتير الموردين</h3>` + table([{ k: 'invoice_no', t: 'رقم الفاتورة' }, { k: 'supplier_ref', t: 'مرجع المورد' }, { k: 'bill_date', t: 'التاريخ' }, { k: 'vendor', t: 'المورد' }, { k: 'branch', t: 'الفرع' }, { t: 'الحساب', f: r => esc(`${r.account_code || ''} ${r.account_name || ''}`) }, num('net'), num('vat'), num('total'), num('outstanding', 'المتبقي')], detailRows).replace('</tbody>', `<tr class="tot"><td>الإجمالي (${detailRows.length} فاتورة)</td><td colspan="5"></td><td class="num">${money(sum(detailRows,'net'))}</td><td class="num">${money(sum(detailRows,'vat'))}</td><td class="num">${money(sum(detailRows,'total'))}</td><td class="num">${money(sum(detailRows,'outstanding'))}</td></tr></tbody>`);
+      $('#o').innerHTML = `<div class="printhead" style="display:block"><b>تقرير المشتريات</b> ${$('#f').value} → ${$('#t').value}</div><h3>ملخص المشتريات حسب ${$('#g').selectedOptions[0].text}</h3>${summary}${details}`; });
     $('#go').onclick = go; $('#g').onchange = go;
     $('#pr').onclick = () => printDoc('تقرير المشتريات والمدخلات', $('#o').innerHTML, { subtitle: `من ${$('#f').value} إلى ${$('#t').value}` });
-    $('#cv').onclick = () => rows.length && csv('purchases-' + $('#g').value, rows); go(); done(m);
+    $('#cv-summary').onclick = () => rows.length && csv('purchases-summary-' + $('#g').value, rows);
+    $('#cv-details').onclick = () => detailRows.length && csv('purchases-invoices', detailRows); go(); done(m);
   };
 
 
@@ -308,81 +341,101 @@ export function installCommerce(VIEWS, X) {
     if (!s) { m.innerHTML = head('إعدادات المتجر') + '<div class="card">لا توجد متاجر.</div>'; return done(m); }
     const warn = []; const safe = (p, d) => api(p).catch(e => { warn.push(e.message); return d; });
     const [w, rd] = await Promise.all([safe(`/stores/${s.id}/site`, {}), safe(`/stores/${s.id}/readiness`, { ready: false, blockers: 0, items: [], is_published: false })]); const ty = types.find(t => t.code === s.commerce_type);
-    m.innerHTML = head('إعدادات المتجر والموقع', 'تكوين نوع النشاط والميزات التشغيلية، إعدادات المتجر الإلكتروني ووسائل الدفع والتوصيل، والتحقق من جاهزية الإطلاق.') + (warn.length ? `<div class="geo-note">⚠ تعذّر تحميل جزء من البيانات: ${esc(warn.join(' | '))}</div>` : '') +
+    const FI = { pos: ['🧾', 'نقاط بيع سريعة وفوترة فورية'], online_shop: ['🛒', 'متجر إلكتروني عام للعملاء'], rental: ['🎪', 'تأجير الأجهزة والمعدات'], booking: ['📅', 'حجز المواعيد وطلبات الخدمة'], services: ['🛠️', 'صيانة وخدمات ما بعد البيع'], wholesale: ['📦', 'بيع بالجملة للشركات'], delivery: ['🚚', 'توصيل الطلبات للعملاء'], subscriptions: ['🔁', 'اشتراكات وفوترة دورية'], transfers: ['🏦', 'حوالات بنكية ومطابقتها'], inventory: ['🏬', 'تتبّع المخزون بالكميات'] };
+    const PI = { cod: '💵', bank_transfer: '🏦', mada: '💳', card: '💳' };
+    const okN = rd.items.filter(i => i.ok).length, totN = rd.items.length, pct = totN ? Math.round(okN * 100 / totN) : 0;
+    if (VIEWS.stores.pane === 'new' && !ad) VIEWS.stores.pane = 'type'; VIEWS.stores.pane = VIEWS.stores.pane || 'type';
+    const ico = X.ico;
+    m.innerHTML = head('إعدادات المتجر والموقع', 'نوع النشاط والميزات، هوية الموقع الإلكتروني، وسائل الدفع والتوصيل، وجاهزية الإطلاق — في أقسام منفصلة.') + (warn.length ? `<div class="geo-note">⚠ تعذّر تحميل جزء من البيانات: ${esc(warn.join(' | '))}</div>` : '') +
       `<div class="tabs">${stores.map(x => `<button data-s="${x.id}" class="${x.id === s.id ? 'on' : ''}">${esc(x.name_ar)}</button>`).join('')}</div>
-      <div class="row noprint" style="gap:8px;margin-bottom:12px">
-        <a href="#sec-type" class="btn ghost sm">١) نوع النشاط والميزات</a>
-        <a href="#sec-site" class="btn ghost sm">٢) الموقع الإلكتروني والتوصيل</a>
-        <a href="#sec-ready" class="btn ghost sm">٣) جاهزية التشغيل</a>
-        ${ad ? '<a href="#sec-new" class="btn ghost sm">٤) متجر جديد</a>' : ''}
-      </div>
-      <div class="card" id="sec-type">
-        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
-          <b>١) نوع النشاط التجاري والميزات المفعّلة</b>
-          <span class="sub">يتحكم في شاشات المحاسبة، نقاط البيع، والمتجر الإلكتروني</span>
+      <div class="card shead" style="--tc:${esc(w.theme_color || '#14B8A6')}">
+        <div class="shead-main">
+          <span class="shead-ic">${ico('stores', 26)}</span>
+          <div><h3>${esc(s.name_ar)}</h3>
+            <div class="sub"><span class="n">${esc(s.code)}</span> · ${esc(ty?.name_ar || s.commerce_type)} · ${s.features.length} ميزة مفعّلة</div></div>
+          ${s.features.includes('online_shop') ? `<a class="btn ghost sm noprint" href="/shop/${esc(s.slug)}" target="_blank" rel="noopener">فتح الموقع ↗</a>` : ''}
         </div>
+        <div class="shead-kpi">
+          <div class="kp"><span class="sub">حالة المتجر</span>${s.is_active ? tag('open', 'نشط') : tag('locked', 'موقوف')}</div>
+          <div class="kp"><span class="sub">الموقع العام</span>${rd.is_published ? tag('ok', 'منشور') : tag('locked', 'غير منشور')}</div>
+          <div class="kp kp-w"><span class="sub">جاهزية التشغيل <b class="n">${okN}/${totN}</b></span><div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div></div>
+        </div>
+      </div>
+      <div class="snav noprint" role="tablist">
+        <button data-pane="type" role="tab">${ico('menus', 16)} النشاط والميزات</button>
+        <button data-pane="site" role="tab">${ico('orders', 16)} هوية الموقع والتواصل</button>
+        <button data-pane="pay" role="tab">${ico('apay', 16)} الدفع والتوصيل والنشر</button>
+        <button data-pane="ready" role="tab">${ico('doc:zatca', 16)} الجاهزية ${rd.blockers ? `<span class="bdg">${rd.blockers}</span>` : ''}</button>
+        ${ad ? `<button data-pane="new" role="tab">${ico('stores', 16)} متجر جديد</button>` : ''}
+      </div>
+
+      <div class="card spane" id="sec-type" data-p="type">
+        <div class="ph"><b>نوع النشاط التجاري والميزات المفعّلة</b><span class="sub">تتحكم في القوائم وشاشات المحاسبة ونقاط البيع والمتجر الإلكتروني</span></div>
         <div class="row">
           <label>نوع التجارة<select id="ct" ${ad ? '' : 'disabled'}>${types.map(t => `<option value="${t.code}" ${t.code === s.commerce_type ? 'selected' : ''}>${esc(t.name_ar)} — ${esc(t.name_en)}</option>`).join('')}</select></label>
           <label>الفرع الافتراضي<select id="cb" ${ad ? '' : 'disabled'}>${br.map(b => `<option value="${b.code}" ${b.id === s.branch_id ? 'selected' : ''}>${esc(b.name_ar)}</option>`).join('')}</select></label>
           <label>حالة المتجر<select id="ca" ${ad ? '' : 'disabled'}><option value="true" ${s.is_active ? 'selected' : ''}>نشط</option><option value="false" ${!s.is_active ? 'selected' : ''}>موقوف</option></select></label>
         </div>
         <p class="sub">${esc(ty?.description_ar || '')}</p>
-        <div class="feat" id="ft">${features.map(f => `<label><input type="checkbox" value="${f.code}" ${s.features.includes(f.code) ? 'checked' : ''} ${ad ? '' : 'disabled'}>${esc(f.name_ar)}</label>`).join('')}</div>
-        ${ad ? '<div class="row" style="margin-top:12px"><button class="btn ghost" id="cd">تطبيق ميزات النوع الافتراضية</button><button class="btn teal" id="cs">حفظ النوع والميزات</button></div>' : ''}
+        <div class="fgrid" id="ft">${features.map(f => `<label class="fcard"><input type="checkbox" value="${f.code}" ${s.features.includes(f.code) ? 'checked' : ''} ${ad ? '' : 'disabled'}><span class="fi">${(FI[f.code] || ['◻'])[0]}</span><span class="ftx"><b>${esc(f.name_ar)}</b><small>${esc((FI[f.code] || [])[1] || f.name_en || '')}</small></span><i class="sw"></i></label>`).join('')}</div>
+        ${ad ? '<div class="row actions"><button class="btn ghost" id="cd">تطبيق ميزات النوع الافتراضية</button><button class="btn teal" id="cs">حفظ النوع والميزات</button></div>' : ''}
       </div>
 
-      <div class="card" id="sec-site">
-        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
-          <b>٢) الموقع الإلكتروني والتوصيل والدفع</b>
-          ${s.features.includes('online_shop') ? `<a class="btn ghost sm" href="/shop/${s.slug}" target="_blank">فتح الموقع للعامة ↗ <span class="sub n">/shop/${esc(s.slug)}</span></a>` : '<span class="sub">فعّل «المتجر الإلكتروني» من النشاط لتشغيل الموقع</span>'}
+      <div class="card spane" id="sec-site" data-p="site">
+        <div class="ph"><b>هوية الموقع الإلكتروني وبيانات التواصل</b><span class="sub">ما يراه العميل في أعلى المتجر وتذييله</span></div>
+        <div class="row">
+          <label style="flex:2">عنوان الموقع (العربية)<input id="wt" value="${esc(w.title_ar || '')}"></label>
+          <label style="flex:2">الشعار القصير (Tagline)<input id="wg" value="${esc(w.tagline_ar || '')}"></label>
+          <label style="flex:0 0 120px">لون الهوية<input type="color" id="wc" value="${esc(w.theme_color || '#14B8A6')}"></label>
         </div>
         <div class="row">
-          <label>عنوان الموقع (العربية)<input id="wt" value="${esc(w.title_ar || '')}"></label>
-          <label>الشعار القصير (Tagline)<input id="wg" value="${esc(w.tagline_ar || '')}"></label>
-          <label>لون هوية المتجر<input type="color" id="wc" value="${esc(w.theme_color || '#14B8A6')}"></label>
+          <label>رقم الجوال<input id="wp" inputmode="tel" dir="ltr" value="${esc(w.phone || '')}"></label>
+          <label>رقم الواتساب<input id="ww" inputmode="tel" dir="ltr" value="${esc(w.whatsapp || '')}"></label>
+          <label>البريد الإلكتروني<input id="we" type="email" dir="ltr" value="${esc(w.email || '')}"></label>
         </div>
         <div class="row">
-          <label>رقم الجوال<input id="wp" value="${esc(w.phone || '')}"></label>
-          <label>رقم الواتساب<input id="ww" value="${esc(w.whatsapp || '')}"></label>
-          <label>البريد الإلكتروني<input id="we" value="${esc(w.email || '')}"></label>
+          <label style="flex:1 1 320px">نبذة عن المتجر<textarea id="wa" rows="3">${esc(w.about_ar || '')}</textarea></label>
+          <label style="flex:1 1 320px">سياسة الاستبدال والاسترجاع<textarea id="wr" rows="3">${esc(w.return_policy_ar || '')}</textarea></label>
         </div>
-        <label>نبذة عن المتجر<textarea id="wa" rows="2">${esc(w.about_ar || '')}</textarea></label><br>
-        <label>سياسة الاستبدال والاسترجاع<textarea id="wr" rows="2">${esc(w.return_policy_ar || '')}</textarea></label>
-        <p><b>وسائل الدفع المقبولة في المتجر</b></p>
-        <div class="feat" id="pm">${Object.entries(PAY).map(([k, l]) => `<label><input type="checkbox" value="${k}" ${(w.payment_methods || ['cod']).includes(k) ? 'checked' : ''}>${l}</label>`).join('')}</div>
-        <div class="row" style="margin-top:12px">
-          <label>رسوم التوصيل (ريال بدون ضريبة)<input id="wd" type="number" step="0.01" value="${w.delivery_fee || 0}"></label>
-          <label>توصيل مجاني للطلبات فوق (ريال)<input id="wf" type="number" step="0.01" value="${w.free_delivery_over || ''}"></label>
-          <label>الحد الأدنى لقيمة الطلب<input id="wm" type="number" step="0.01" value="${w.min_order || 0}"></label>
-        </div>
-        <label style="margin-top:8px"><input type="checkbox" id="wpub" style="width:auto" ${w.is_published ? 'checked' : ''}> نشر المتجر والموقع الإلكتروني للعامة (يُعرض المنتجات «المنشورة» فقط)</label>
-        ${ad ? '<br><button class="btn teal" style="margin-top:12px" id="ws">حفظ إعدادات الموقع والتوصيل</button>' : ''}
       </div>
 
-      <div class="card" id="sec-ready">
-        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
-          <b>٣) تقرير جاهزية التشغيل والإطلاق</b>
-          <span>${rd.ready ? tag('open', 'جاهز للتشغيل ✓') : tag('closed', 'ناقص ' + rd.blockers + ' بند')} ${rd.is_published ? tag('ok', 'منشور للعامة') : tag('locked', 'غير منشور')}</span>
+      <div class="card spane" id="sec-pay" data-p="pay">
+        <div class="ph"><b>وسائل الدفع والتوصيل والنشر</b><span class="sub">مدى والبطاقات تُسجَّل كطريقة دفع فقط — لا يوجد ربط ببوابة دفع</span></div>
+        <p><b>وسائل الدفع المقبولة</b></p>
+        <div class="fgrid fgrid-s" id="pm">${Object.entries(PAY).map(([k, l]) => `<label class="fcard"><input type="checkbox" value="${k}" ${(w.payment_methods || ['cod']).includes(k) ? 'checked' : ''}><span class="fi">${PI[k] || '💰'}</span><span class="ftx"><b>${l}</b></span><i class="sw"></i></label>`).join('')}</div>
+        <p style="margin-top:14px"><b>التوصيل والحد الأدنى للطلب</b> <span class="sub">(بدون ضريبة)</span></p>
+        <div class="row">
+          <label>رسوم التوصيل (ريال)<input id="wd" type="number" step="0.01" min="0" value="${w.delivery_fee || 0}"></label>
+          <label>توصيل مجاني للطلبات فوق (ريال)<input id="wf" type="number" step="0.01" min="0" value="${w.free_delivery_over || ''}"></label>
+          <label>الحد الأدنى لقيمة الطلب (ريال)<input id="wm" type="number" step="0.01" min="0" value="${w.min_order || 0}"></label>
         </div>
-        <ul class="ready">${rd.items.map(i => `<li>${i.ok ? '✓' : '✗'} ${esc(i.t)}${!i.ok && i.fix ? ` <span class="sub">— ${esc(i.fix)}</span>` : ''}${i.ok && i.warn ? ` <span class="sub">— تنبيه: ${esc(i.fix || 'يحتاج مراجعة')}</span>` : ''}</li>`).join('')}</ul>
+        <label class="fcard pubcard"><input type="checkbox" id="wpub" ${w.is_published ? 'checked' : ''}><span class="fi">🌐</span><span class="ftx"><b>نشر المتجر والموقع الإلكتروني للعامة</b><small>تُعرض المنتجات «المنشورة» فقط، ولا يظهر الموقع إلا إذا كان المتجر نشطاً والمتجر الإلكتروني مفعّلاً</small></span><i class="sw"></i></label>
+      </div>
+
+      <div class="card spane" id="sec-ready" data-p="ready">
+        <div class="ph"><b>تقرير جاهزية التشغيل والإطلاق</b>
+          <span>${rd.ready ? tag('open', 'جاهز للتشغيل ✓') : tag('closed', 'ناقص ' + rd.blockers + ' بند')} ${rd.is_published ? tag('ok', 'منشور للعامة') : tag('locked', 'غير منشور')}</span></div>
+        <ul class="ready rlist">${rd.items.map(i => `<li class="${i.ok ? 'ok' : 'no'}"><span class="rk">${i.ok ? '✓' : '✗'}</span><span>${esc(i.t)}${!i.ok && i.fix ? ` <span class="sub">— ${esc(i.fix)}</span>` : ''}${i.ok && i.warn ? ` <span class="sub">— تنبيه: ${esc(i.fix || 'يحتاج مراجعة')}</span>` : ''}</span></li>`).join('')}</ul>
         <p class="sub">المنتجات المنشورة: <span class="n">${rd.published_products}</span>${rd.out_of_stock_products ? ` · نافدة المخزون: <span class="n">${rd.out_of_stock_products}</span>` : ''}</p>
-        ${ad ? '<div class="row noprint" style="margin-top:12px"><button class="btn teal" id="sd">ضبط الإعدادات الافتراضية (تعبئة الحقول الفارغة)</button><button class="btn ghost" id="so">استبدال الكل بالقيم الافتراضية…</button></div>' : ''}
+        ${ad ? '<div class="row noprint actions"><button class="btn teal" id="sd">ضبط الإعدادات الافتراضية (تعبئة الحقول الفارغة)</button><button class="btn ghost" id="so">استبدال الكل بالقيم الافتراضية…</button></div>' : ''}
       </div>
 
-      ${ad ? `<div class="card noprint" id="sec-new">
-        <div class="row" style="justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:8px;margin-bottom:12px">
-          <b>٤) إضافة متجر جديد</b>
-          <span class="sub">إنشاء متجر إضافي مرتبط بفرع ونوع تجارة مخصص</span>
+      ${ad ? `<div class="card noprint spane" id="sec-new" data-p="new">
+        <div class="ph"><b>إضافة متجر جديد</b><span class="sub">إنشاء متجر إضافي مرتبط بفرع ونوع تجارة مخصص</span></div>
+        <div class="row">
+          <label>الرمز (A-Z0-9-)<input id="nc" placeholder="STORE-02" dir="ltr"></label>
+          <label>الرابط slug (a-z0-9-)<input id="ns" placeholder="branch2" dir="ltr"></label>
+          <label style="flex:2">الاسم بالعربية<input id="nn" placeholder="متجر فرع العليا"></label>
         </div>
         <div class="row">
-          <label>الرمز (A-Z0-9-)<input id="nc" placeholder="STORE-02"></label>
-          <label>الرابط slug (a-z0-9-)<input id="ns" placeholder="branch2"></label>
-          <label style="flex:2">الاسم بالعربية<input id="nn" placeholder="متجر فرع العليا"></label>
           <label>النوع<select id="nt">${types.map(t => `<option value="${t.code}">${esc(t.name_ar)}</option>`).join('')}</select></label>
           <label>الفرع<select id="nb">${br.map(b => `<option value="${b.code}">${esc(b.name_ar)}</option>`).join('')}</select></label>
           <button class="btn teal" id="na">إنشاء المتجر</button>
         </div>
-      </div>` : ''}`;
+      </div>` : ''}
+      ${ad ? '<div class="savebar noprint" id="savebar" hidden><span class="sub">تغييرات الهوية والدفع والتوصيل تُحفظ معاً</span><button class="btn teal" id="ws">حفظ إعدادات الموقع والتوصيل</button></div>' : ''}`;
+    const showPane = p => { VIEWS.stores.pane = p; m.querySelectorAll('.spane').forEach(x => x.hidden = x.dataset.p !== p); m.querySelectorAll('[data-pane]').forEach(b => { const on = b.dataset.pane === p; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); }); const sb = m.querySelector('#savebar'); if (sb) sb.hidden = !(p === 'site' || p === 'pay'); };
+    m.querySelectorAll('[data-pane]').forEach(b => b.onclick = () => showPane(b.dataset.pane)); showPane(VIEWS.stores.pane);
     m.querySelectorAll('.tabs [data-s]').forEach(b => b.onclick = () => VIEWS.stores(m, +b.dataset.s));
     const checked = sel => [...m.querySelectorAll(sel + ' input:checked')].map(i => i.value);
     $('#cd')?.addEventListener('click', () => { const t = types.find(x => x.code === $('#ct').value); m.querySelectorAll('#ft input').forEach(i => i.checked = t.default_features.includes(i.value)); });
@@ -397,35 +450,68 @@ export function installCommerce(VIEWS, X) {
   // ================= الإدارة وحسابي =================
   VIEWS.users = async function (m) {
     const ad = can('admin'); const users = ad ? await api('/users') : [];
+    const [company, currencyData] = ad ? await Promise.all([api('/company'), api('/currencies')]) : [null, { currencies: [] }];
+    const months=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
     m.innerHTML = head('الإدارة وحسابي', `المستخدم الحالي: ${esc(me().username)} (${esc(me().role)})`) +
       `<div class="card noprint"><b>تغيير كلمة مروري</b><div class="row"><label>الحالية<input type="password" id="po"></label><label>الجديدة (10+ أحرف وأرقام)<input type="password" id="pn"></label><button class="btn teal" id="pc">تغيير</button></div></div>` +
+      (ad ? `<section class="card org-settings"><div class="org-head"><div><h2>بيانات المؤسسة وإعدادات الحساب</h2><p>تظهر هذه البيانات على المستندات والتقارير، وتحدد إعدادات السنة المالية والعملات.</p></div><span class="org-badge">إعدادات عامة</span></div>
+        <div class="org-logo"><div class="org-logo-preview"><img id="org-logo-preview" src="${esc(company.logo_data_url||'/logo.png')}" alt="شعار المؤسسة"></div><div><b>شعار المؤسسة</b><p class="sub">PNG أو JPG أو WebP، حتى 500 كيلوبايت.</p><input type="file" id="org-logo" accept="image/png,image/jpeg,image/webp"><button class="btn ghost sm" type="button" id="org-logo-clear">إزالة الشعار المخصص</button></div></div>
+        <div class="org-grid"><label>اسم المؤسسة بالعربية *<input id="org-name-ar" maxlength="200" value="${esc(company.name_ar||'')}"></label><label>اسم المؤسسة بالإنجليزية *<input id="org-name-en" maxlength="200" dir="ltr" value="${esc(company.name_en||'')}"></label>
+        <label>رمز الدولة وفق ISO (حرفان)<input id="org-country" maxlength="2" pattern="[A-Za-z]{2}" placeholder="SA" value="${esc(company.country_code||'SA')}"></label><label>بداية السنة المالية<select id="org-fiscal-month">${months.map((n,i)=>`<option value="${i+1}" ${Number(company.fiscal_start_month||1)===i+1?'selected':''}>${n} — ${i+1}/01</option>`).join('')}</select></label>
+        <label>العملة الأساسية<select id="org-currency">${currencyData.currencies.map(c=>`<option value="${esc(c.code.trim())}" ${c.code.trim()===(company.base_currency||'SAR').trim()?'selected':''}>${esc(c.code.trim())} — ${esc(c.name_ar)}</option>`).join('')}</select></label><label>الرقم الضريبي / رقم التسجيل<input id="org-vat" maxlength="40" inputmode="text" placeholder="رقم التسجيل الضريبي حسب الدولة" value="${esc(company.vat_number||'')}"></label>
+        <label>السجل التجاري<input id="org-cr" maxlength="40" value="${esc(company.cr_number||'')}"></label><label>رقم المبنى<input id="org-building" maxlength="20" value="${esc(company.building_no||'')}"></label><label>الشارع<input id="org-street" maxlength="200" value="${esc(company.street||'')}"></label><label>الحي<input id="org-district" maxlength="120" value="${esc(company.district||'')}"></label><label>المدينة<input id="org-city" maxlength="120" value="${esc(company.city||'')}"></label><label>الرمز البريدي<input id="org-postal" maxlength="20" value="${esc(company.postal_code||'')}"></label></div>
+        <div class="org-note">تغيير العملة الأساسية متاح قبل تسجيل أي قيود أو فواتير فقط. تغيير بداية السنة لا يعيد كتابة الفترات المالية السابقة.</div><div class="org-actions"><button class="btn teal" id="org-save">حفظ بيانات المؤسسة</button></div></section>` : '') +
       (ad ? `<div class="card">${table([{ k: 'username', t: 'المستخدم' }, { k: 'full_name', t: 'الاسم' }, { t: 'الدور', f: r => `<select data-r="${r.id}">${['viewer', 'cashier', 'accountant', 'admin'].map(x => `<option ${x === r.role ? 'selected' : ''}>${x}</option>`).join('')}</select>` }, { t: 'نشط', f: r => `<input type="checkbox" style="width:auto" data-u="${r.id}" ${r.is_active ? 'checked' : ''}>` }], users)}</div>
         <div class="card noprint"><b>مستخدم جديد</b><div class="row"><label>اسم المستخدم<input id="nu"></label><label>الاسم<input id="nf"></label><label>الدور<select id="nr"><option>viewer</option><option>cashier</option><option selected>accountant</option><option>admin</option></select></label><label>كلمة المرور<input type="password" id="np"></label><button class="btn teal" id="na">إضافة</button></div></div>` : '');
     $('#pc').onclick = guard(async () => { await api('/me/password', { method: 'POST', body: { old: $('#po').value, new: $('#pn').value } }); toast('تم تغيير كلمة المرور'); $('#po').value = $('#pn').value = ''; });
-    if (ad) { $('#na').onclick = guard(async () => { await api('/users', { method: 'POST', body: { username: $('#nu').value, full_name: $('#nf').value, role: $('#nr').value, password: $('#np').value } }); toast('تمت الإضافة'); VIEWS.users(m); });
+    if (ad) {
+      let logoData=company.logo_data_url||null;
+      $('#org-logo').onchange=()=>{const file=$('#org-logo').files?.[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>500*1024){toast('اختر PNG أو JPG أو WebP بحجم لا يتجاوز 500 كيلوبايت',false);$('#org-logo').value='';return;}const reader=new FileReader();reader.onload=()=>{logoData=String(reader.result);$('#org-logo-preview').src=logoData;};reader.readAsDataURL(file);};
+      $('#org-logo-clear').onclick=()=>{logoData=null;$('#org-logo-preview').src='/logo.png';$('#org-logo').value='';};
+      $('#org-save').onclick=guard(async()=>{const country=$('#org-country').value.trim().toUpperCase();const save=$('#org-save');save.disabled=true;try{await api('/company/settings',{method:'PUT',body:{name_ar:$('#org-name-ar').value,name_en:$('#org-name-en').value,country_code:country,base_currency:$('#org-currency').value,fiscal_start_month:Number($('#org-fiscal-month').value),vat_number:$('#org-vat').value.trim(),cr_number:$('#org-cr').value,building_no:$('#org-building').value,street:$('#org-street').value,district:$('#org-district').value,city:$('#org-city').value,postal_code:$('#org-postal').value,logo_data_url:logoData||''}});const updated=await api('/company');X.setCompany(updated);document.querySelectorAll('.brand img,.mobtop img').forEach(img=>img.src=updated.logo_data_url||'/logo.png');toast('تم حفظ بيانات المؤسسة وإعداداتها');await VIEWS.users(m);}finally{save.disabled=false;}});
+      $('#na').onclick = guard(async () => { await api('/users', { method: 'POST', body: { username: $('#nu').value, full_name: $('#nf').value, role: $('#nr').value, password: $('#np').value } }); toast('تمت الإضافة'); VIEWS.users(m); });
       const upd = id => guard(async () => { const row = users.find(u => u.id === id); await api('/users/' + id, { method: 'PUT', body: { role: m.querySelector(`[data-r="${id}"]`).value, is_active: m.querySelector(`[data-u="${id}"]`).checked } }); toast('حُدّث'); VIEWS.users(m); });
       m.querySelectorAll('[data-r]').forEach(s => s.onchange = upd(+s.dataset.r)); m.querySelectorAll('[data-u]').forEach(s => s.onchange = upd(+s.dataset.u)); } done(m);
   };
 
-  // ================= المخزون (كميات فقط: بلا تقييم أو تكلفة مبيعات بعد) =================
+  // ================= المخزون (كميات + تقييم بمتوسط التكلفة المتحرك + قيود تلقائية) =================
   VIEWS.stock = async function (m, sid) {
     const stores = (await api('/stores')).filter(x => x.is_active); const ed = can('admin', 'accountant');
     if (!stores.length) { m.innerHTML = head('أرصدة المخزون') + '<div class="card">لا يوجد متجر نشط.</div>'; return done(m); }
     sid = stores.some(x => x.id === +sid) ? +sid : stores[0].id;
-    const [rows, moves] = await Promise.all([api('/stock?store_id=' + sid), api('/stock/moves?store_id=' + sid)]);
+    const [rows, moves, sum, partners, unvalued] = await Promise.all([api('/stock?store_id=' + sid), api('/stock/moves?store_id=' + sid), api('/stock/summary?store_id=' + sid), ed ? api('/partners') : [], ed ? api('/stock/unvalued') : []]);
+    const vendors = partners.filter(p => p.kind === 'vendor');
     const KIND = { opening: 'رصيد افتتاحي', receipt: 'استلام', sale: 'بيع', sale_return: 'مرتجع', adjustment: 'تسوية جرد' };
-    const out = rows.filter(r => +r.available <= 0).length, low = rows.filter(r => +r.available > 0 && +r.available <= 5).length;
-    m.innerHTML = head('أرصدة المخزون', 'الكميات من حركات غير قابلة للتعديل. المتاح = الرصيد − المحجوز لطلبات المتجر (المسلَّمة غير المفوترة تبقى محجوزة). لا يُسمح بالبيع بالسالب.', '<button class="btn" id="pr-stock">🖨️ طباعة أرصدة المخزون</button>') +
+    const gap = Number(sum.gap);
+    const gapNote = Math.abs(gap) < 0.01 ? '' : gap > 0
+      ? `<div class="geo-note noprint">قيمة المخزون بمتوسط التكلفة (<b class="n">${money(sum.all_stock_value)}</b>) أعلى من رصيد حساب المخزون 1140 (<b class="n">${money(sum.gl_balance)}</b>) بفرق <b class="n">${money(gap)}</b> — أرصدة سابقة بلا قيد. ${ed ? `<select id="og" style="width:auto"><option value="3100">3100 رأس المال</option><option value="3300">3300 الأرباح المبقاة</option><option value="3200">3200 الاحتياطي</option></select> <button class="btn amber sm" id="ogb">ترحيل قيد الرصيد الافتتاحي</button>` : ''}</div>`
+      : `<div class="geo-note noprint">رصيد حساب المخزون 1140 (<b class="n">${money(sum.gl_balance)}</b>) أعلى من قيمة المخزون الفعلية (<b class="n">${money(sum.all_stock_value)}</b>) بفرق <b class="n">${money(-gap)}</b> — راجع فواتير موردين رُحّلت على 1140 دون تسجيل استلام.</div>`;
+    m.innerHTML = head('أرصدة المخزون', 'الكميات من حركات غير قابلة للتعديل، ومُقيَّمة بمتوسط التكلفة المتحرك: الشراء يزيد المخزون 1140، والبيع يرحّل تكلفة المبيعات 5100 تلقائياً عند اعتماد الفاتورة. المتاح = الرصيد − المحجوز.', '<button class="btn" id="pr-stock">🖨️ طباعة أرصدة المخزون</button>') +
       (stores.length > 1 ? `<div class="card noprint"><label>المتجر<select id="ss">${stores.map(x => `<option value="${x.id}" ${x.id === sid ? 'selected' : ''}>${esc(x.name_ar)}</option>`).join('')}</select></label></div>` : '') +
-      `<div class="kpis"><div class="kpi">أصناف متتبَّعة<b class="n">${rows.length}</b></div><div class="kpi">نفد المتاح<b class="n">${out}</b></div><div class="kpi">منخفض (5 أو أقل)<b class="n">${low}</b></div></div>
-      <div class="card">${rows.length ? table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { t: 'الرصيد', f: r => `<b class="n">${+r.on_hand}</b>` }, { t: 'محجوز', f: r => `<span class="n">${+r.reserved}</span>` }, { t: 'المتاح', f: r => +r.available <= 0 ? tag('locked', 'نفد') : +r.available <= 5 ? tag('closed', +r.available) : tag('open', +r.available) }], rows)
-        : '<div class="geo-note">لا توجد منتجات تتبع المخزون في هذا المتجر. فعّل «تتبّع المخزون» لمنتج من المبيعات ← المنتجات والعروض، ثم سجّل الكمية الافتتاحية.</div>'}</div>
-      ${ed && rows.length ? `<div class="card noprint"><b>تسجيل استلام بضاعة</b><div class="row"><label style="flex:2">المنتج<select id="rp">${rows.map(r => `<option value="${r.id}">${esc(r.sku)} — ${esc(r.name_ar)}</option>`).join('')}</select></label><label>الكمية<input id="rq" type="number" min="1" step="1"></label><label>المرجع (فاتورة المورد)<input id="rr"></label><label>ملاحظة<input id="rn"></label><button class="btn teal" id="rs">تسجيل الاستلام</button></div></div>` : ''}
-      <div class="card"><b>آخر الحركات</b>${table([{ t: 'التاريخ', f: r => `<span class="n">${esc(String(r.created_at).slice(0, 16).replace('T', ' '))}</span>` }, { k: 'sku', t: 'الرمز' }, { k: 'product', t: 'المنتج' }, { t: 'النوع', f: r => KIND[r.kind] || r.kind }, { t: 'الكمية', f: r => `<span class="n" style="color:${+r.qty < 0 ? '#b91c1c' : '#166534'}">${+r.qty}</span>` }, { k: 'ref', t: 'المرجع' }, { k: 'created_by', t: 'بواسطة' }], moves)}</div>
-      <div class="sub">لم تُنفَّذ بعد: تقييم المخزون (FIFO/متوسط) وتكلفة البضاعة المباعة 5100 وأوامر الشراء والاستلام الجزئي.</div>`;
-    $('#pr-stock').onclick = () => printDoc('تقرير أرصدة المخزون والمتاح', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { k: 'on_hand', t: 'الرصيد الدفتري' }, { k: 'reserved', t: 'المحجوز' }, { k: 'available', t: 'المتاح' }], rows), { subtitle: 'تقرير أرصدة المخزون المتاحة بالمستودع' });
+      stockStats(sum) + gapNote +
+      (ed && unvalued.length ? `<div class="card noprint"><b>استكمال تقييم المخزون غير المسعّر</b><div class="geo-note">توجد كميات موجبة بلا متوسط تكلفة؛ لن تُرحّل مبيعاتها أو تسوياتها بتكلفة صفرية. أدخل تكلفة الوحدة من فاتورة الشراء أو مستند الرصيد الافتتاحي المعتمد، مع رقم المستند. لن تُغيّر هذه العملية الحركات أو القيود السابقة.</div><label>مرجع مستند التكلفة<input id="uvref" placeholder="رقم فاتورة المورد / محضر الرصيد الافتتاحي"></label>${table([{k:'sku',t:'الرمز'},{k:'name_ar',t:'المنتج'},{t:'الكمية الحالية',f:r=>`<span class="n">${+r.on_hand}</span>`},{t:'تكلفة الوحدة الموثقة',f:r=>`<input type="number" min="0.0001" step="0.0001" data-uvcost="${r.id}" value="${Number(r.cost_price)>0?Number(r.cost_price):''}" placeholder="أدخل التكلفة" style="width:150px">`}],unvalued)}<button class="btn teal" id="uvsave">حفظ متوسطات التكلفة</button></div>` : '') +
+      (ed && rows.length ? `<div class="card noprint"><b>تسجيل استلام بضاعة</b>
+        <div class="row"><label style="flex:2">المنتج<select id="rp">${rows.map(r => `<option value="${r.id}">${esc(r.sku)} — ${esc(r.name_ar)}</option>`).join('')}</select></label><label>الكمية<input id="rq" type="number" min="1" step="1"></label>
+          <label>تكلفة الوحدة (بدون ضريبة)<input id="rc" type="number" min="0" step="0.01"></label><label>الضريبة<select id="rv"><option value="15">15%</option><option value="0">0%</option></select></label>
+          <label>تاريخ الاستلام<input id="rd" type="date" value="${today()}" max="${today()}"></label></div>
+        <div class="row"><label>طريقة الشراء<select id="rm"><option value="credit">آجل (مورد)</option><option value="cash">نقداً (الصندوق)</option><option value="bank">بنك</option></select></label>
+          <label id="rwl" style="flex:2">المورد<select id="rw"><option value="">— اختر —</option>${vendors.map(v => `<option value="${v.id}">${esc(v.name_ar)}</option>`).join('')}</select></label>
+          <label>المرجع (فاتورة المورد)<input id="rr"></label><label>ملاحظة<input id="rn"></label><button class="btn teal" id="rs">تسجيل الاستلام</button></div>
+        <div class="sub" id="rtot"></div></div>` : '') +
+      `<div class="card">${rows.length ? table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { t: 'الرصيد', f: r => `<b class="n">${+r.on_hand}</b>` }, { t: 'محجوز', f: r => `<span class="n">${+r.reserved}</span>` }, { t: 'المتاح', f: r => +r.available <= 0 ? tag('locked', 'نفد') : +r.available <= 5 ? tag('closed', +r.available) : tag('open', +r.available) }, num('avg_cost', 'متوسط التكلفة'), num('stock_value', 'قيمة المخزون')], rows)
+        : '<div class="geo-note">لا توجد منتجات تتبع المخزون في هذا المتجر. فعّل «تتبّع المخزون» لمنتج من المخزون ← المنتجات والأصناف، ثم سجّل الكمية الافتتاحية.</div>'}</div>
+      <div class="card"><b>آخر الحركات</b>${table([{ t: 'التاريخ', f: r => `<span class="n">${esc(r.move_date)}</span>` }, { k: 'sku', t: 'الرمز' }, { k: 'product', t: 'المنتج' }, { t: 'النوع', f: r => KIND[r.kind] || r.kind }, { t: 'الكمية', f: r => `<span class="n" style="color:${+r.qty < 0 ? '#b91c1c' : '#166534'}">${+r.qty}</span>` }, { t: 'تكلفة الوحدة', f: r => r.unit_cost === null ? '' : `<span class="n">${money(r.unit_cost)}</span>` }, { t: 'القيمة', f: r => r.unit_cost === null ? '' : `<span class="n">${money(r.amount)}</span>` }, { k: 'entry_no', t: 'القيد' }, { k: 'ref', t: 'المرجع' }, { k: 'created_by', t: 'بواسطة' }], moves)}</div>
+      <div class="sub">ملاحظات: الاستلام بلا «تكلفة وحدة» يُسجَّل كمية فقط بمتوسط التكلفة الحالي دون قيد. مرتجعات المبيعات (إشعار دائن) لا تعيد المخزون تلقائياً بعد.</div>`;
+    $('#pr-stock').onclick = () => printDoc('تقرير أرصدة المخزون والمتاح', table([{ k: 'sku', t: 'الرمز' }, { k: 'name_ar', t: 'المنتج' }, { k: 'category', t: 'التصنيف' }, { k: 'on_hand', t: 'الرصيد الدفتري' }, { k: 'reserved', t: 'المحجوز' }, { k: 'available', t: 'المتاح' }, num('avg_cost', 'متوسط التكلفة'), num('stock_value', 'قيمة المخزون')], rows), { subtitle: `تقرير أرصدة المخزون — إجمالي الكميات ${sum.total_qty} — إجمالي القيمة ${money(sum.total_value)} ر.س` });
     $('#ss')?.addEventListener('change', e => VIEWS.stock(m, e.target.value));
-    $('#rs')?.addEventListener('click', guard(async () => { const q = $('#rq').value; if (!(Number(q) > 0)) return toast('أدخل كمية موجبة', false); await api('/stock/receive', { method: 'POST', body: { product_id: $('#rp').value, store_id: sid, qty: q, ref: $('#rr').value, note: $('#rn').value } }); toast('تم تسجيل الاستلام'); VIEWS.stock(m, sid); })); done(m);
+    $('#uvsave')?.addEventListener('click', guard(async () => { const reference=$('#uvref').value.trim(); if(reference.length<2)return toast('أدخل رقم مستند موثوق للتكلفة',false); const items=[...m.querySelectorAll('[data-uvcost]')].filter(i=>i.value!==''&&Number(i.value)>0).map(i=>({product_id:Number(i.dataset.uvcost),unit_cost:i.value})); if(!items.length)return toast('أدخل تكلفة موثقة لصنف واحد على الأقل',false); if(!confirm(`سيُسجّل متوسط تكلفة افتتاحي للأصناف المحددة بالرجوع إلى: ${reference}. هل راجعت التكاليف مع المستندات؟`))return; const result=await api('/stock/initial-costs',{method:'POST',body:{reference,items}}); toast(`تم تقييم ${result.valued_count} صنفاً؛ أُعيد حساب القيمة وفق الكميات الحالية`); VIEWS.stock(m,sid); }));
+    const recalc = () => { const q = +$('#rq')?.value || 0, c = +$('#rc')?.value || 0, v = +$('#rv')?.value || 0; if ($('#rwl')) $('#rwl').hidden = $('#rm').value !== 'credit'; if ($('#rtot')) $('#rtot').textContent = c > 0 && q > 0 ? `الصافي ${money(q * c)} + ضريبة ${money(q * c * v / 100)} = ${money(q * c * (1 + v / 100))} ر.س` : 'بلا تكلفة وحدة: يُسجَّل كمية فقط دون قيد محاسبي'; };
+    ['#rq', '#rc', '#rv', '#rm'].forEach(x => $(x)?.addEventListener('input', recalc)); recalc();
+    $('#ogb')?.addEventListener('click', guard(async () => { if (!confirm('سيُرحَّل قيد: مدين 1140 / دائن حساب حقوق الملكية المختار بمبلغ الفرق. متابعة؟')) return; await api('/stock/post-opening', { method: 'POST', body: { equity_account: $('#og').value } }); toast('رُحّل قيد الرصيد الافتتاحي'); VIEWS.stock(m, sid); }));
+    $('#rs')?.addEventListener('click', guard(async () => { const q = $('#rq').value; if (!(Number(q) > 0)) return toast('أدخل كمية موجبة', false);
+      const cost = $('#rc').value, mode = $('#rm').value; if (cost !== '' && Number(cost) > 0 && mode === 'credit' && (!$('#rw').value || !$('#rr').value.trim())) return toast('الشراء الآجل يتطلب اختيار المورد ورقم فاتورته', false);
+      const r = await api('/stock/receive', { method: 'POST', body: { product_id: $('#rp').value, store_id: sid, qty: q, unit_cost: cost, vat_rate: +$('#rv').value, date: $('#rd').value || undefined, mode, vendor_id: $('#rw').value || undefined, ref: $('#rr').value, note: $('#rn').value } });
+      toast(r.entry_id ? 'تم تسجيل الاستلام وترحيل القيد' : 'تم تسجيل الاستلام (كمية فقط)'); VIEWS.stock(m, sid); })); done(m);
   };
   VIEWS.count = async function (m, sid) {
     const stores = (await api('/stores')).filter(x => x.is_active); const ed = can('admin', 'accountant');
@@ -560,17 +646,21 @@ export function installCommerce(VIEWS, X) {
     if (!can('admin')) { m.innerHTML = head('إعدادات القوائم') + '<div class="card">هذه الشاشة للمدير فقط.</div>'; return done(m); }
     const nav = X.getNav(), st = X.getMenuState(), off = new Set(st.off), COL = ['#7c3aed', '#0ea5e9', '#16a34a', '#f97316', '#db2777', '#0d9488', '#b45309'];
     let dirty = false;
-    const sw = (id, locked) => `<label class="sw"><input type="checkbox" data-id="${id}" ${off.has(id) ? '' : 'checked'} ${locked ? 'disabled' : ''}><i></i></label>`;
+    // Permission-matrix style (modern checkbox cards): a checkbox on every main menu, section and screen. Same data model as before (the `off` set).
+    const ck = (id, locked) => `<label class="pk${locked ? ' lk' : ''}"><input type="checkbox" data-id="${id}" ${off.has(id) ? '' : 'checked'} ${locked ? 'disabled' : ''}><i></i></label>`;
+    // Dashboard look: gradient group chips on top (same palette as the dashboard KPI tiles) and ONE masonry flow of section cards below, so no empty gaps are left.
+    const GR = ['linear-gradient(135deg,#14B8A6,#0d7f74)', 'linear-gradient(135deg,#7C3AED,#5b21b6)', 'linear-gradient(135deg,#F59E0B,#c27803)', 'linear-gradient(135deg,#103555,#2a4a80)', 'linear-gradient(135deg,#0ea5e9,#0369a1)', 'linear-gradient(135deg,#16a34a,#0f7a37)', 'linear-gradient(135deg,#db2777,#9d174d)'];
     const draw = () => {
-      let ci = 0;
       m.innerHTML = head('إعدادات القوائم', 'فعّل أو عطّل ظهور أي قائمة رئيسية أو قسم أو شاشة. التعطيل يخفي القائمة عن جميع المستخدمين، وهو إخفاء للواجهة فقط وليس بديلاً عن الصلاحيات: كل طلب API يتحقق من الدور في الخادم، والشاشات المحمية (الإدارة وحسابي، إعدادات القوائم) لا يمكن إخفاؤها.') +
         `<div class="savebar noprint"><button class="btn" style="background:#16b364" id="sv">💾 حفظ</button><button class="btn ghost" id="rs">استعادة الافتراضي</button><span class="sub" id="dr">${dirty ? '● توجد تغييرات غير محفوظة' : ''}</span></div>` +
-        nav.map(g => { const gl = st.locked.has('main:' + g.id);
-          return `<div class="mhead"><h2>${g.ic} ${g.t}</h2>${gl ? '<span class="sub">🔒 أساسية</span>' : sw('main:' + g.id)}<span class="lbl sub">${off.has('main:' + g.id) ? 'تم التعطيل' : 'تم التفعيل'}</span></div>
-          <div class="mset">${g.secs.map(sc => { const sl = st.locked.has('sec:' + sc.id), col = COL[ci++ % COL.length], dim = off.has('main:' + g.id) || off.has('sec:' + sc.id);
-            return `<div class="mcard"><h3 style="color:${col}"><span style="display:flex;align-items:center;gap:8px">${X.ico(sc.t ? 'sec:' + sc.id : 'main:' + g.id, 18)}${esc(sc.t || g.t)}</span><span style="display:flex;align-items:center;gap:8px"><small class="sub">${off.has('sec:' + sc.id) ? 'القسم معطّل' : 'القسم مفعّل'}</small>${sl ? '🔒' : sw('sec:' + sc.id)}</span></h3>
-              ${sc.kids.map(([id, l, f]) => { const lk = st.locked.has(id), isOff = off.has(id) || dim;
-                return `<div class="mrow ${isOff ? 'off' : ''}"><span class="nm">${X.ico(id, 16)}${esc(l)}${f && !X.hasFeature(f) ? ' <small class="tag t-closed">يتطلب تفعيل ميزة في إعدادات المتجر</small>' : ''}</span><span style="display:flex;align-items:center">${lk ? '<small class="sub">🔒 لا يمكن تعطيلها</small>' : `<span class="lbl">${off.has(id) ? 'تم التعطيل' : 'تم التفعيل'}</span>${sw(id)}`}</span></div>`; }).join('')}</div>`; }).join('')}</div>`; }).join('');
+        `<div class="pm-chips">${nav.map((g, gi) => { const gl = st.locked.has('main:' + g.id), n = g.secs.reduce((t, sc) => t + sc.kids.length, 0), on = g.secs.reduce((t, sc) => t + sc.kids.filter(k => !off.has(k[0]) && !off.has('sec:' + sc.id)).length, 0), goff = off.has('main:' + g.id);
+          return `<div class="pm-chip${goff ? ' is-off' : ''}" style="background:${GR[gi % GR.length]}">${gl ? '<span class="pk lk" title="أساسية">🔒</span>' : ck('main:' + g.id)}<span class="pm-ct">${g.ic} ${esc(g.t)}</span><b>${goff ? 0 : on}/${n}</b></div>`; }).join('')}</div>` +
+        `<div class="pm-masonry">${nav.map((g, gi) => g.secs.map(sc => { const sl = st.locked.has('sec:' + sc.id), goff = off.has('main:' + g.id), dim = goff || off.has('sec:' + sc.id), act = sc.kids.filter(k => !off.has(k[0])).length;
+            return `<div class="pm-card${dim ? ' is-off' : ''}"><div class="pm-chead" style="background:${GR[gi % GR.length]}">${sl ? '<span class="pk lk" title="أساسي">🔒</span>' : ck('sec:' + sc.id)}<span class="pm-t">${X.ico(sc.t ? 'sec:' + sc.id : 'main:' + g.id, 18)}<span>${esc(sc.t || g.t)}<small>${esc(g.t)}</small></span></span><b class="pm-n">${dim ? 0 : act}/${sc.kids.length}</b></div>
+              <ul class="pm-list">${sc.kids.map(([id, l, f]) => { const lk = st.locked.has(id), isOff = off.has(id) || dim;
+                return `<li class="${isOff ? 'off' : ''}">${lk ? '<span class="pk lk" title="لا يمكن تعطيلها">🔒</span>' : ck(id)}<span class="nm">${X.ico(id, 15)}${esc(l)}${f && !X.hasFeature(f) ? ' <small class="tag t-closed">يتطلب تفعيل ميزة في إعدادات المتجر</small>' : ''}</span></li>`; }).join('')}</ul></div>`; }).join('')).join('')}</div>`;
+      // a section checkbox shows the "some screens off" (indeterminate) state when only part of its screens are hidden
+      m.querySelectorAll('.pm-card').forEach(cd => { const mc = cd.querySelector('.pm-chead input'), ks = [...cd.querySelectorAll('.pm-list input')]; if (mc && mc.checked && ks.some(k => !k.checked) && ks.some(k => k.checked)) mc.indeterminate = true; });
       m.querySelectorAll('input[data-id]').forEach(i => i.onchange = () => { i.checked ? off.delete(i.dataset.id) : off.add(i.dataset.id); dirty = true; draw(); });
       $('#sv').onclick = guard(async () => { await X.applyMenu([...off]); dirty = false; toast('تم حفظ إعدادات القوائم'); X.rerender(); });
       $('#rs').onclick = () => { off.clear(); st.defaults.forEach(x => off.add(x)); dirty = true; draw(); };

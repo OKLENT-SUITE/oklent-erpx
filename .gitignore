@@ -1,6 +1,16 @@
-node_modules
-.env
-*.dump
 
-uploads/
+*.dump
+.env
+node_modules
+reports/.rows
+reports/api.pid
+reports/logs
 scratch/
+uploads/
+*.pem
+*.key
+
+.env
+.env.backup
+deploy/certs/
+*.zip

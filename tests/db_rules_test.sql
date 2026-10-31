@@ -3,11 +3,12 @@
 BEGIN;
 CREATE TEMP TABLE results(name text, expected text, got text, pass boolean);
 CREATE FUNCTION pg_temp.expect(p_name text, p_code text, p_sql text) RETURNS void LANGUAGE plpgsql AS $$
-DECLARE m text := 'NO ERROR';
+DECLARE m text := 'NO ERROR (statement succeeded)'; failed boolean := false;
 BEGIN
-  BEGIN EXECUTE p_sql; EXECUTE 'SET CONSTRAINTS ALL IMMEDIATE'; RAISE EXCEPTION 'ROLLBACKME';
-  EXCEPTION WHEN OTHERS THEN m := SQLERRM; END;
-  INSERT INTO results VALUES (p_name, p_code, left(m,70), m LIKE p_code || '%');
+  -- the statement MUST raise an error; a statement that succeeds is a FAIL (an empty p_code means "any error"; it is no longer vacuous)
+  BEGIN EXECUTE p_sql; EXECUTE 'SET CONSTRAINTS ALL IMMEDIATE'; RAISE EXCEPTION 'ROLLBACKME' USING ERRCODE = 'P9999';
+  EXCEPTION WHEN OTHERS THEN IF SQLSTATE <> 'P9999' THEN m := SQLERRM; failed := true; END IF; END;
+  INSERT INTO results VALUES (p_name, p_code, left(m,70), failed AND m LIKE p_code || '%');
 END $$;
 
 SELECT set_config('erpx.user','tester',true);
@@ -63,4 +64,11 @@ INSERT INTO results SELECT 'Hash chain verifies', 'true', ok::text, ok FROM veri
 
 SELECT CASE WHEN pass THEN 'PASS' ELSE 'FAIL' END AS status, name, expected, got FROM results ORDER BY pass, name;
 SELECT count(*) FILTER (WHERE pass) AS passed, count(*) FILTER (WHERE NOT pass) AS failed FROM results;
+SELECT count(*) FILTER (WHERE NOT pass) > 0 AS any_fail FROM results \gset
 ROLLBACK;
+\if :any_fail
+  \echo 'db_rules_test: FAILURES PRESENT'
+  DO $$ BEGIN RAISE EXCEPTION 'db_rules_test: one or more checks FAILED'; END $$;   -- ON_ERROR_STOP => psql exit code 3
+\else
+  \echo 'db_rules_test: ALL PASSED'
+\endif

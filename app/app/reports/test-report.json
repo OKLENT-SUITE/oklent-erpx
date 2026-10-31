@@ -1,0 +1,139 @@
+{
+ "started": "2026-10-22T10:10:42Z",
+ "finished": "2026-10-22T10:12:52.549549+00:00",
+ "verdict": "PASS",
+ "suites": [
+  {
+   "name": "unit + security (no DB)",
+   "status": "PASS",
+   "seconds": "0",
+   "detail": "69 checks"
+  },
+  {
+   "name": "production config gate (.env.example refused)",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "0 checks"
+  },
+  {
+   "name": "npm audit (production deps, high+)",
+   "status": "PASS",
+   "seconds": "0",
+   "detail": "0 checks"
+  },
+  {
+   "name": "fresh install (all db/init files, strict)",
+   "status": "PASS",
+   "seconds": "2",
+   "detail": "0 checks"
+  },
+  {
+   "name": "SQL accounting rules (db_rules_test.sql)",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "0 checks"
+  },
+  {
+   "name": "SQL accounting integrity (db_rules_extra.sql)",
+   "status": "PASS",
+   "seconds": "0",
+   "detail": "0 checks"
+  },
+  {
+   "name": "migrations: fresh/upgrade/idempotent/atomic",
+   "status": "PASS",
+   "seconds": "14",
+   "detail": "7 checks"
+  },
+  {
+   "name": "API smoke + accounting + concurrency (smoke-test.js)",
+   "status": "PASS",
+   "seconds": "5",
+   "detail": "129 checks"
+  },
+  {
+   "name": "HR / payroll / custody / expenses",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "29 checks"
+  },
+  {
+   "name": "SEC-01 HR privacy by role",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "33 checks"
+  },
+  {
+   "name": "API-01 HR input validation",
+   "status": "PASS",
+   "seconds": "0",
+   "detail": "32 checks"
+  },
+  {
+   "name": "inventory + invoice smoke",
+   "status": "PASS",
+   "seconds": "0",
+   "detail": "16 checks"
+  },
+  {
+   "name": "UX static: RTL, viewport, labels, focus, motion (PARTIAL UX-01)",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "17 checks"
+  },
+  {
+   "name": "storefront UI (jsdom, mocked API)",
+   "status": "PASS",
+   "seconds": "5",
+   "detail": "60 checks"
+  },
+  {
+   "name": "product images + upload security",
+   "status": "PASS",
+   "seconds": "2",
+   "detail": "18 checks"
+  },
+  {
+   "name": "UI: 40 screens + write flows (jsdom)",
+   "status": "PASS",
+   "seconds": "75",
+   "detail": "98 checks"
+  },
+  {
+   "name": "ACC-02/T-07 concurrency + idempotency (100 parallel)",
+   "status": "PASS",
+   "seconds": "3",
+   "detail": "15 checks"
+  },
+  {
+   "name": "OPS-02/SEC-04 health + no secrets in logs",
+   "status": "PASS",
+   "seconds": "1",
+   "detail": "9 checks"
+  },
+  {
+   "name": "OPS-01 backup -> restore -> verify",
+   "status": "PASS",
+   "seconds": "3",
+   "detail": "9 checks"
+  },
+  {
+   "name": "nginx: headers, 429 limits, TLS redirect",
+   "status": "PASS",
+   "seconds": "10",
+   "detail": "14 checks"
+  },
+  {
+   "name": "UX in real browsers/devices (screenshots, contrast, screen reader)",
+   "status": "SKIPPED",
+   "seconds": "0",
+   "detail": "no browser in this environment: manual checklist in docs/DEPLOYMENT.md"
+  },
+  {
+   "name": "Docker build / compose up / real TLS certificate",
+   "status": "SKIPPED",
+   "seconds": "0",
+   "detail": "needs Docker + a public host: manual steps in docs/DEPLOYMENT.md"
+  }
+ ]
+}

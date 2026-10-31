@@ -9,6 +9,22 @@
  ],
  "mains": [
   {
+   "id": "ai",
+   "ic": "✦",
+   "t": "مساعد OKLENT",
+   "secs": [
+    {
+     "id": "aim",
+     "kids": [
+      [
+       "ai-assistant",
+       "المساعد الذكي"
+      ]
+     ]
+    }
+   ]
+  },
+  {
    "id": "dash",
    "ic": "◈",
    "t": "لوحة التحكم",
@@ -54,8 +70,8 @@
        "العملاء"
       ],
       [
-       "products",
-       "المنتجات والعروض"
+       "offers",
+       "العروض والخصومات"
       ],
       [
        "transfers",
@@ -104,6 +120,10 @@
      "t": "المخزون",
      "kids": [
       [
+       "products",
+       "المنتجات والأصناف"
+      ],
+      [
        "stock",
        "أرصدة المخزون"
       ],
@@ -122,11 +142,15 @@
    "secs": [
     {
      "id": "hrm",
-     "t": "شؤون الموظفين",
+     "t": "",
      "kids": [
       [
        "employees",
        "الموظفون"
+      ],
+      [
+       "hrsettings",
+       "إعدادات الموظفين"
       ],
       [
        "payroll",
@@ -135,6 +159,10 @@
       [
        "custody",
        "العهد"
+      ],
+      [
+       "fleet",
+       "الأسطول"
       ]
      ]
     }
@@ -285,6 +313,9 @@
  ],
  "icons": {
   "main:dash": "dashboard",
+  "main:ai": "book",
+  "sec:aim": "book",
+  "ai-assistant": "book",
   "main:ops": "briefcase",
   "main:hr": "users",
   "main:fin": "coins",
@@ -321,6 +352,7 @@
   "employees": "users",
   "payroll": "badgecheck",
   "custody": "wallet",
+  "fleet": "truck",
   "expenses": "receipt",
   "quick": "banknote",
   "dues": "clock",
@@ -340,6 +372,7 @@
   "doc:faq": "help",
   "doc:commerce": "store",
   "doc:zatca": "verified",
-  "doc:google-play": "play"
+  "doc:google-play": "play",
+  "offers": "percent"
  }
 }
